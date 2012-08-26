@@ -30,6 +30,7 @@ KERN_SRCFILES :=	kern/entry.S \
 			kern/pmap.c \
 			kern/file.c \
 			kern/net.c \
+			kern/label.c \
 			dev/video.c \
 			dev/kbd.c \
 			dev/serial.c \
@@ -60,7 +61,8 @@ KERN_INITFILES :=	sh \
 			cat \
 			wc \
 			testfs \
-			testvm
+			testvm \
+			testlabel
 ifdef LAB9
 # Performance benchmarking programs
 KERN_INITFILES +=	matmult \

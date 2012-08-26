@@ -16,6 +16,7 @@
 
 #include <inc/trap.h>
 #include <inc/syscall.h>
+#include <inc/label.h>
 
 #include <kern/spinlock.h>
 #if LAB >= 3
@@ -53,8 +54,10 @@ typedef struct proc {
 	// Scheduling state for this process.
 	proc_state	state;		// current state
 	struct proc	*readynext;	// chain on ready queue
+	struct proc	*pacingnext;	// chain on pacing queue
 	struct cpu	*runcpu;	// cpu we're running on if running
 	struct proc	*waitchild;	// child proc if waiting for child
+	uint64_t	ts;		// pacing timestamp
 
 	// Save area for user-visible state when process is not running.
 	procstate	sv;
@@ -85,6 +88,8 @@ typedef struct proc {
 
 	int32_t		pmcmax;		// Max insn count set using perf ctrs
 #endif
+	label_t		label;
+	label_t		clearance;
 } proc;
 
 #define proc_cur()	(cpu_cur()->proc)
@@ -101,11 +106,17 @@ void proc_init(void);	// Initialize process management code
 proc *proc_alloc(proc *p, uint32_t cn);	// Allocate new child
 void proc_ready(proc *p);	// Make process p ready
 void proc_save(proc *p, trapframe *tf, int entry);	// save process state
-void proc_wait(proc *p, proc *cp, trapframe *tf) gcc_noreturn;
+void proc_wait(proc *p, proc *cp, trapframe *tf, uint64_t wait_ts) gcc_noreturn;
+void proc_wake(proc *p, uint64_t time);
+void proc_wake_all(uint64_t time);
 void proc_sched(void) gcc_noreturn;	// Find and run some ready process
 void proc_run(proc *p) gcc_noreturn;	// Run a specific process
 void proc_yield(trapframe *tf) gcc_noreturn;	// Yield to another process
 void proc_ret(trapframe *tf, int entry) gcc_noreturn;	// Return to parent
+
+int proc_set_label(proc *p, tag_t tag);
+int proc_set_clearance(proc *p, tag_t tag);
+
 void proc_check(void);			// Check process code
 
 

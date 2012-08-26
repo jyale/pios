@@ -36,6 +36,9 @@ proc *proc_root;	// root process, once it's created in init()
 static spinlock readylock;	// Spinlock protecting ready queue
 static proc *readyhead;		// Head of ready queue
 static proc **readytail;	// Tail of ready queue
+static spinlock pacinglock;	// spinlock for pacing queue
+static proc *pacinghead;	// head of pacing queue
+static proc **pacingtail;	// tail of pacing queue
 #else
 // LAB 2: insert your scheduling data structure declarations here.
 #endif
@@ -50,6 +53,10 @@ proc_init(void)
 #if SOL >= 2
 	spinlock_init(&readylock);
 	readytail = &readyhead;
+	readyhead = NULL;
+	spinlock_init(&pacinglock);
+	pacingtail = &pacinghead;
+	pacinghead = NULL;
 #else
 	// your module initialization code here
 #endif
@@ -139,7 +146,7 @@ proc_save(proc *p, trapframe *tf, int entry)
 	if (tf != &p->sv.tf)
 		p->sv.tf = *tf;		// integer register state
 	if (entry == 0)
-		p->sv.tf.rip -= 2;	// back up to replay INT instruction
+		p->sv.pff |= PFF_REEXEC;	// replay INT instruction
 #if LAB >= 9
 
 	if (p->sv.pff & PFF_USEFPU) {	// FPU state
@@ -177,25 +184,97 @@ proc_save(proc *p, trapframe *tf, int entry)
 // Parent process 'p' must be running and locked on entry.
 // The supplied trapframe represents p's register state on syscall entry.
 void gcc_noreturn
-proc_wait(proc *p, proc *cp, trapframe *tf)
+proc_wait(proc *p, proc *cp, trapframe *tf, uint64_t ts)
 {
+//	cprintf("[proc wait] p %p cp %p ts %llx\n", p, cp, ts);
 #if SOL >= 2
 	assert(spinlock_holding(&p->lock));
 	assert(cp && cp != &proc_null);	// null proc is always stopped
-	assert(cp->state != PROC_STOP);
+	assert(cp->state != PROC_STOP || ts != 0);
 
 	p->state = PROC_WAIT;
 	p->runcpu = NULL;
 	p->waitchild = cp;	// remember what child we're waiting on
+	p->ts = ts;
 	proc_save(p, tf, 0);	// save process state before INT instruction
 
 	spinlock_release(&p->lock);
+
+	if (ts != 0) {
+//		cprintf("[proc wait] pace p %p\n", p);
+		// put it in pacing list
+		spinlock_acquire(&pacinglock);
+		p->pacingnext = NULL;
+		*pacingtail = p;
+		pacingtail = &p->pacingnext;
+//		cprintf("[proc wait] pacinghead %p pacingtail %p -> %p\n", pacinghead, pacingtail, *pacingtail);
+		spinlock_release(&pacinglock);
+	}
 
 	proc_sched();
 #else	// SOL >= 2
 	panic("proc_wait not implemented");
 #endif	// SOL >= 2
 }
+
+// wake up process if
+// 1. the process it's waiting for is stopped, and
+// 2. timestamp has passed
+void
+proc_wake(proc *p, uint64_t time)
+{
+//	cprintf("[proc wake] p %p t %llx\n", p, time);
+	assert(spinlock_holding(&p->lock));
+	assert(p->state == PROC_WAIT);
+	proc *cp = p->waitchild;
+	if (cp && cp->state != PROC_STOP) {
+		// do nothing, let others run
+		goto exit;
+	}
+	p->waitchild = NULL;
+	if (time < p->ts) {
+		// do nothing, let others run
+		goto exit;
+	}
+	// move out from pacing list
+	proc_ready(p);
+exit:
+	;
+}
+
+// wake all process in pacing list if possible
+void
+proc_wake_all(uint64_t time)
+{
+	// traverse pacing list, wake up everyone
+	spinlock_acquire(&pacinglock);
+	proc **pp = &pacinghead;
+	proc *p = *pp;
+	while (p) {
+//		cprintf("[proc wake all] BEFORE pacinghead %p pacingtail %p -> %p\n", pacinghead, pacingtail, *pacingtail);
+		spinlock_acquire(&p->lock);
+		proc_wake(p, time);
+		if (p->state == PROC_READY) {
+			// ready to remove from pacing list
+//			cprintf("[proc wake all] remove proc %p\n", p);
+			*pp = p->pacingnext;
+//			cprintf("[proc wake all] pp %p -> %p p %p pacinghead %p pacingtail %p -> %p\n", pp, *pp, p, pacinghead, pacingtail, *pacingtail);
+			if (pp == &pacinghead && pacingtail == &p->pacingnext) {
+				assert(pacinghead == NULL);
+				pacingtail = &pacinghead;
+			}
+			p->pacingnext = NULL;
+		} else {
+			// step one proc
+			pp = &p->pacingnext;
+		}
+		spinlock_release(&p->lock);
+		p = *pp;
+//		cprintf("[proc wake all] AFTER pacinghead %p pacingtail %p -> %p\n", pacinghead, pacingtail, *pacingtail);
+	}
+	spinlock_release(&pacinglock);
+}
+
 
 void gcc_noreturn
 proc_sched(void)
@@ -296,7 +375,13 @@ proc_run(proc *p)
 	lcr3(mem_phys(p->pml4));
 
 #endif
-	trap_return_debug(&p->sv.tf);
+	if (p->sv.pff & PFF_REEXEC) {
+		// re-execute trap code
+		trap(&p->sv.tf);
+	} else {
+		// direct return
+		trap_return(&p->sv.tf);
+	}
 #else	// SOL >= 2
 	panic("proc_run not implemented");
 #endif	// SOL >= 2
@@ -364,8 +449,7 @@ proc_ret(trapframe *tf, int entry)
 
 	// If parent is waiting to sync with us, wake it up.
 	if (p->state == PROC_WAIT && p->waitchild == cp) {
-		p->waitchild = NULL;
-		proc_run(p);
+		proc_wake(p, 0);
 	}
 
 	spinlock_release(&p->lock);
@@ -373,6 +457,32 @@ proc_ret(trapframe *tf, int entry)
 #else
 	panic("proc_ret not implemented");
 #endif	// SOL >= 2
+}
+
+int
+proc_set_label(proc *p, tag_t tag)
+{
+	assert(spinlock_holding(&p->lock));
+	// FIXME: need to check original labels
+//	cprintf("[proc set label] orig ");
+//	label_print(&p->label);
+	label_promote(&p->label, tag);
+//	cprintf("[proc set label] new ");
+//	label_print(&p->label);
+	return 0;
+}
+
+int
+proc_set_clearance(proc *p, tag_t tag)
+{
+	assert(spinlock_holding(&p->lock));
+	// FIXME: need to check original labels
+//	cprintf("[proc set clearance] orig ");
+//	label_print(&p->clearance);
+	label_promote(&p->clearance, tag);
+//	cprintf("[proc set clearance] new ");
+//	label_print(&p->clearance);
+	return 0;
 }
 
 // Helper functions for proc_check()

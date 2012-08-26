@@ -260,6 +260,7 @@ trap(trapframe *tf)
 #if LAB >= 2
 #if SOL >= 2
 	proc *p = proc_cur();
+	p->sv.pff &= ~PFF_REEXEC;
 	switch (tf->trapno) {
 	case T_SYSCALL:
 		assert(tf->cs & 3);	// syscalls only come from user space
@@ -289,6 +290,7 @@ trap(trapframe *tf)
 #if LAB >= 9	// Determinator
 		uint64_t t = timer_read(); // update PIT count high bits
 		//cprintf("LTIMER on %d: %lld\n", c->id, (long long)t);
+		proc_wake_all(t * 1000000000 / TIMER_FREQ);
 #if LAB >= 99
 		{	static uint64_t lastt;
 			static int cnt;

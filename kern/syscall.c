@@ -14,11 +14,13 @@
 #include <inc/assert.h>
 #include <inc/trap.h>
 #include <inc/syscall.h>
+#include <inc/label.h>
 
 #include <kern/cpu.h>
 #include <kern/trap.h>
 #include <kern/proc.h>
 #include <kern/syscall.h>
+#include <kern/label.h>
 #if LAB >= 5
 #include <kern/net.h>
 #endif
@@ -174,9 +176,27 @@ do_put(trapframe *tf, uint32_t cmd)
 			panic("sys_put: no memory for child");
 	}
 
+	// WWY: do label pacing
+	// FIXME: don't do it during re-execution after pacing
+	tag_t less = label_leq_hi(&p->label, &cp->clearance);
+	uint64_t ts = 0;
+	if (less.time) {
+		// wait until paced
+		uint64_t t = timer_read();
+		t = t * 1000000000 / TIMER_FREQ;	// convert to nanoseconds
+		ts = ROUNDUP(t, label_time(less.time));
+	}
+
 	// Synchronize with child if necessary.
-	if (cp->state != PROC_STOP)
-		proc_wait(p, cp, tf);
+	if (cp->state != PROC_STOP || ts != 0)
+		proc_wait(p, cp, tf, ts);
+
+	// WWY: do label checking
+	if (less.level) {
+		// should abort
+		spinlock_release(&p->lock);
+		goto exit;
+	}
 
 	// Since the child is now stopped, it's ours to control;
 	// we no longer need our process lock -
@@ -264,6 +284,8 @@ do_put(trapframe *tf, uint32_t cmd)
 				VM_USERHI-VM_USERLO);
 
 #endif	// SOL >= 3
+
+exit:
 	// Start the child if requested
 	if (cmd & SYS_START)
 		proc_ready(cp);
@@ -294,9 +316,27 @@ do_get(trapframe *tf, uint32_t cmd)
 	if (!cp)
 		cp = &proc_null;
 
+	// WWY: do label pacing
+	// FIXME: don't do it during re-execution after pacing
+	tag_t less = label_leq_hi(&p->label, &cp->clearance);
+	uint64_t ts = 0;
+	if (less.time) {
+		// wait until paced
+		uint64_t t = timer_read();
+		t = t * 1000000000 / TIMER_FREQ;	// convert to nanoseconds
+		ts = ROUNDUP(t, label_time(less.time));
+	}
+
 	// Synchronize with child if necessary.
-	if (cp->state != PROC_STOP)
-		proc_wait(p, cp, tf);
+	if (cp->state != PROC_STOP || ts != 0)
+		proc_wait(p, cp, tf, ts);
+
+	// WWY: do label checking
+	if (less.level) {
+		// should abort
+		spinlock_release(&p->lock);
+		goto exit;
+	}
 
 	// Since the child is now stopped, it's ours to control;
 	// we no longer need our process lock -
@@ -377,6 +417,7 @@ do_get(trapframe *tf, uint32_t cmd)
 		systrap(tf, T_GPFLT, 0);	// only valid for PUT
 
 #endif	// SOL >= 3
+exit:
 	trap_return(tf);	// syscall completed
 }
 
@@ -410,6 +451,40 @@ do_ncpu(trapframe *tf)
 	trap_return(tf);
 }
 #endif
+
+static void gcc_noreturn
+do_label(trapframe *tf)
+{
+	tag_t tag;
+	memmove(&tag, &tf->rdx, sizeof(tag_t));
+	proc *p = proc_cur();
+	spinlock_acquire(&p->lock);
+	if (tf->rbx) {
+		if (tf->rcx) {
+			cprintf("original clearance: ");
+			label_print(&p->clearance);
+			tf->rax = proc_set_clearance(p, tag);
+			cprintf("new clearance: ");
+			label_print(&p->clearance);
+		} else {
+			cprintf("original label: ");
+			label_print(&p->label);
+			tf->rax = proc_set_label(p, tag);
+			cprintf("new label: ");
+			label_print(&p->label);
+		}
+	} else {
+		if (tf->rcx) {
+			cprintf("current clearance: ");
+			label_print(&p->clearance);
+		} else {
+			cprintf("current label: ");
+			label_print(&p->label);
+		}
+	}
+	spinlock_release(&p->lock);
+	trap_return(tf);
+}
 #endif	// SOL >= 2
 
 // Common function to handle all system calls -
@@ -430,6 +505,7 @@ syscall(trapframe *tf)
 	case SYS_TIME:	return do_time(tf);
 	case SYS_NCPU:	return do_ncpu(tf);
 #endif
+	case SYS_LABEL:	return do_label(tf);
 #else	// not SOL >= 2
 	// Your implementations of SYS_PUT, SYS_GET, SYS_RET here...
 #endif	// not SOL >= 2

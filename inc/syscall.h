@@ -13,6 +13,9 @@
 
 #include <trap.h>
 
+#ifndef __ASSEMBLER__
+#include <label.h>
+#endif // !__ASSEMBLER__
 
 // System call command codes (passed in EAX)
 #define SYS_TYPE	0x0000000f	// Basic operation type
@@ -24,6 +27,7 @@
 #define SYS_TIME	0x00000004	// Get time since kernel boot
 #define SYS_NCPU	0x00000005	// Set max number of running CPUs
 #endif
+#define SYS_LABEL	0x00000006	// set label or clearance
 
 #define SYS_START	0x00000010	// Put: start child running
 #if LAB >= 99
@@ -101,6 +105,7 @@ typedef struct procstate {
 #define PFF_USEFPU	0x0001		// process has used the FPU
 #define PFF_NONDET	0x0100		// enable nondeterministic features
 #define PFF_ICNT	0x0200		// enable instruction count/recovery
+#define PFF_REEXEC	0x0010		// re-execute trap/syscall
 
 
 static void gcc_inline
@@ -186,6 +191,58 @@ sys_ncpu(int newlimit)
 		  "c" (newlimit));
 }
 #endif	// SOL >= 4
+
+static void gcc_inline
+sys_print_label()
+{
+	asm volatile("int %0" :
+		: "i" (T_SYSCALL),
+		  "a" (SYS_LABEL),
+		  "b" (0),
+		  "c" (0)
+		: "cc", "memory");
+}
+
+static void gcc_inline
+sys_print_clearance()
+{
+	asm volatile("int %0" :
+		: "i" (T_SYSCALL),
+		  "a" (SYS_LABEL),
+		  "b" (0),
+		  "c" (1)
+		: "cc", "memory");
+}
+
+static int gcc_inline
+sys_set_label(tag_t tag)
+{
+	int ret;
+	asm volatile("int %1"
+		: "=a" (ret)
+		: "i" (T_SYSCALL),
+		  "a" (SYS_LABEL),
+		  "b" (1),
+		  "c" (0),
+		  "d" (tag)
+		: "cc", "memory");
+	return ret;
+}
+
+static int gcc_inline
+sys_set_clearance(tag_t tag)
+{
+	int ret;
+	asm volatile("int %1"
+		: "=a" (ret)
+		: "i" (T_SYSCALL),
+		  "a" (SYS_LABEL),
+		  "b" (1),
+		  "c" (1),
+		  "d" (tag)
+		: "cc", "memory");
+	return ret;
+}
 
 #endif /* !__ASSEMBLER__ */
 

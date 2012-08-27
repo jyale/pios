@@ -30,6 +30,7 @@
 #define SYS_LABEL	0x00000006	// set label or clearance
 
 #define SYS_START	0x00000010	// Put: start child running
+#define SYS_REMOTE	0x00000020	// Put: put to remote process
 #if LAB >= 99
 //#define SYS_STOP	0x00000010	// Get: stop child if not done [ND]
 //#define SYS_ANY	0x00000020	// Get: get results from any child [ND]

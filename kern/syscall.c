@@ -177,8 +177,11 @@ do_put(trapframe *tf, uint32_t cmd)
 	}
 
 	// WWY: do label pacing
-	// FIXME: don't do it during re-execution after pacing
 	tag_t less = label_leq_hi(&p->label, &cp->clearance);
+	if (p->sv.pff & PFF_REEXEC) {
+		less.time = 0;
+		p->sv.pff &= ~PFF_REEXEC;
+	}
 	uint64_t ts = 0;
 	if (less.time) {
 		// wait until paced
@@ -317,8 +320,11 @@ do_get(trapframe *tf, uint32_t cmd)
 		cp = &proc_null;
 
 	// WWY: do label pacing
-	// FIXME: don't do it during re-execution after pacing
 	tag_t less = label_leq_hi(&p->label, &cp->clearance);
+	if (p->sv.pff & PFF_REEXEC) {
+		less.time = 0;
+		p->sv.pff &= ~PFF_REEXEC;
+	}
 	uint64_t ts = 0;
 	if (less.time) {
 		// wait until paced

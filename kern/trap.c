@@ -260,7 +260,6 @@ trap(trapframe *tf)
 #if LAB >= 2
 #if SOL >= 2
 	proc *p = proc_cur();
-	p->sv.pff &= ~PFF_REEXEC;
 	switch (tf->trapno) {
 	case T_SYSCALL:
 		assert(tf->cs & 3);	// syscalls only come from user space

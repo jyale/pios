@@ -166,7 +166,8 @@ sys_ret(void)
 {
 	asm volatile("int %0" : :
 		"i" (T_SYSCALL),
-		"a" (SYS_RET));
+		"a" (SYS_RET),
+		"c" (0));
 }
 
 #if LAB >= 9

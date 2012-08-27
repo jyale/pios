@@ -32,7 +32,8 @@ typedef enum proc_state {
 	PROC_STOP	= 0,	// Passively waiting for parent to run it
 	PROC_READY,		// Scheduled to run but not running now
 	PROC_RUN,		// Running on some CPU
-	PROC_WAIT,		// Waiting to synchronize with child
+	PROC_WAIT,		// Waiting to synchronize with child/receiver
+	PROC_BLOCK,		// waiting to synchronize with sender
 #if LAB >= 5
 	PROC_MIGR,		// Migrating to another node
 	PROC_AWAY,		// Migrated to another node
@@ -113,6 +114,7 @@ void proc_sched(void) gcc_noreturn;	// Find and run some ready process
 void proc_run(proc *p) gcc_noreturn;	// Run a specific process
 void proc_yield(trapframe *tf) gcc_noreturn;	// Yield to another process
 void proc_ret(trapframe *tf, int entry) gcc_noreturn;	// Return to parent
+void proc_block(trapframe *tf, proc *p) gcc_noreturn;	// block process
 
 int proc_set_label(proc *p, tag_t tag);
 int proc_set_clearance(proc *p, tag_t tag);

@@ -167,13 +167,20 @@ do_put(trapframe *tf, uint32_t cmd)
 #endif // SOL >= 5
 	spinlock_acquire(&p->lock);
 
-	// Find the named child process; create if it doesn't exist
-	uint32_t cn = tf->rdx & 0xff;
-	proc *cp = p->child[cn];
-	if (!cp) {
-		cp = proc_alloc(p, cn);
-		if (!cp)	// XX handle more gracefully
-			panic("sys_put: no memory for child");
+	proc *cp = NULL;
+	if (cmd & SYS_REMOTE) {
+		// SYS_REMOTE = SYS_COPY | SYS_START for remote process
+		cmd = SYS_COPY | SYS_START;
+		// TODO: find receiver process
+	} else {
+		// Find the named child process; create if it doesn't exist
+		uint32_t cn = tf->rdx & 0xff;
+		cp = p->child[cn];
+		if (!cp) {
+			cp = proc_alloc(p, cn);
+			if (!cp)	// XX handle more gracefully
+				panic("sys_put: no memory for child");
+		}
 	}
 
 	// WWY: do label pacing
@@ -191,7 +198,7 @@ do_put(trapframe *tf, uint32_t cmd)
 	}
 
 	// Synchronize with child if necessary.
-	if (cp->state != PROC_STOP || ts != 0)
+	if ((cp->state != PROC_STOP && cp->state != PROC_BLOCK) || ts != 0)
 		proc_wait(p, cp, tf, ts);
 
 	// WWY: do label checking
@@ -320,7 +327,7 @@ do_get(trapframe *tf, uint32_t cmd)
 		cp = &proc_null;
 
 	// WWY: do label pacing
-	tag_t less = label_leq_hi(&p->label, &cp->clearance);
+	tag_t less = label_leq_hi(&cp->label, &p->clearance);
 	if (p->sv.pff & PFF_REEXEC) {
 		less.time = 0;
 		p->sv.pff &= ~PFF_REEXEC;
@@ -431,7 +438,15 @@ static void gcc_noreturn
 do_ret(trapframe *tf)
 {
 	//cprintf("RET proc %x rip %p rsp %p\n", proc_cur(), tf->rip, tf->rsp);
-	proc_ret(tf, 1);	// Complete syscall insn and return to parent
+	if (tf->rcx == 0) {
+		// return to parent
+		proc_ret(tf, 1);	// Complete syscall insn and return to parent
+	} else {
+		// block process
+		proc *p = NULL;
+		// TODO: find sender
+		proc_block(tf, p);
+	}
 }
 
 #if LAB >= 9

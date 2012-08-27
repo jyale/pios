@@ -190,7 +190,7 @@ proc_wait(proc *p, proc *cp, trapframe *tf, uint64_t ts)
 #if SOL >= 2
 	assert(spinlock_holding(&p->lock));
 	assert(cp && cp != &proc_null);	// null proc is always stopped
-	assert(cp->state != PROC_STOP || ts != 0);
+	assert((cp->state != PROC_STOP && cp->state != PROC_BLOCK) || ts != 0);
 
 	p->state = PROC_WAIT;
 	p->runcpu = NULL;
@@ -227,19 +227,17 @@ proc_wake(proc *p, uint64_t time)
 	assert(spinlock_holding(&p->lock));
 	assert(p->state == PROC_WAIT);
 	proc *cp = p->waitchild;
-	if (cp && cp->state != PROC_STOP) {
-		// do nothing, let others run
-		goto exit;
+	if (cp && cp->state == PROC_STOP) {
+		// child is stopped
+		p->waitchild = NULL;
 	}
-	p->waitchild = NULL;
-	if (time < p->ts) {
-		// do nothing, let others run
-		goto exit;
+	if (time > p->ts) {
+		// timestamp has passed
+		p->ts = 0;
 	}
-	// move out from pacing list
-	proc_ready(p);
-exit:
-	;
+	if (p->waitchild == NULL && p->ts == 0) {
+		proc_ready(p);
+	}
 }
 
 // wake all process in pacing list if possible
@@ -457,6 +455,28 @@ proc_ret(trapframe *tf, int entry)
 #else
 	panic("proc_ret not implemented");
 #endif	// SOL >= 2
+}
+
+void gcc_noreturn
+proc_block(trapframe *tf, proc *p)
+{
+	proc *cp = proc_cur();
+	assert(cp->state == PROC_RUN && cp->runcpu == cpu_cur());
+
+	spinlock_acquire(&cp->lock);
+	cp->state = PROC_BLOCK;
+	cp->runcpu = NULL;
+	proc_save(cp, tf, 1);
+	spinlock_release(&cp->lock);
+
+	// if sender is waiting to sync with us, wake it up
+	spinlock_acquire(&p->lock);
+	if (p->state == PROC_WAIT && p->waitchild == cp) {
+		proc_wake(p, 0);
+	}
+	spinlock_release(&p->lock);
+
+	proc_sched();
 }
 
 int

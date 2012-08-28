@@ -157,21 +157,29 @@ do_put(trapframe *tf, uint32_t cmd)
 	assert(p->state == PROC_RUN && p->runcpu == cpu_cur());
 	//cprintf("PUT proc %x rip %p rsp %p cmd %x\n", p, tf->rip, tf->rsp, cmd);
 
+	if (cmd & SYS_REMOTE == 0) {
 #if SOL >= 5
-	// First migrate if we need to.
-	uint8_t node = (tf->rdx >> 8) & 0xff;
-	if (node == 0) node = RRNODE(p->home);		// Goin' home
-	if (node != net_node)
-		net_migrate(tf, node, 0);	// abort syscall and migrate
-
+		// First migrate if we need to.
+		uint8_t node = (tf->rdx >> 8) & 0xff;
+		if (node == 0) node = RRNODE(p->home);		// Goin' home
+		if (node != net_node)
+			net_migrate(tf, node, 0);	// abort syscall and migrate
 #endif // SOL >= 5
+	}
 	spinlock_acquire(&p->lock);
 
 	proc *cp = NULL;
 	if (cmd & SYS_REMOTE) {
+		// TODO: find receiver process
+		// FIXME: now choose child
+		uint32_t cn = tf->rdx & 0xff;
+		cp = p->child[cn];
+		if (!cp) {
+			spinlock_release(&p->lock);
+			goto exit;
+		}
 		// SYS_REMOTE = SYS_COPY | SYS_START for remote process
 		cmd = SYS_COPY | SYS_START;
-		// TODO: find receiver process
 	} else {
 		// Find the named child process; create if it doesn't exist
 		uint32_t cn = tf->rdx & 0xff;
@@ -438,14 +446,14 @@ static void gcc_noreturn
 do_ret(trapframe *tf)
 {
 	//cprintf("RET proc %x rip %p rsp %p\n", proc_cur(), tf->rip, tf->rsp);
-	if (tf->rcx == 0) {
+	if (tf->rdx == 0) {
 		// return to parent
 		proc_ret(tf, 1);	// Complete syscall insn and return to parent
 	} else {
 		// block process
-		proc *p = NULL;
+		proc *cp = proc_cur();
 		// TODO: find sender
-		proc_block(tf, p);
+		proc_block(tf, cp->parent);
 	}
 }
 

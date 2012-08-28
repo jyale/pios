@@ -107,6 +107,16 @@ proc_alloc(proc *p, uint32_t cn)
 	}
 #endif	// SOL >= 3
 
+	// label & msg init
+	if (p) {
+		memmove(&(cp->label), &(p->label), sizeof(label_t));
+		memmove(&(cp->clearance), &(p->clearance), sizeof(label_t));
+	} else {
+		int i;
+		label_init(&cp->label, tag_default);
+		label_init(&cp->clearance, tag_default);
+	}
+
 	if (p)
 		p->child[cn] = cp;
 	return cp;
@@ -227,7 +237,7 @@ proc_wake(proc *p, uint64_t time)
 	assert(spinlock_holding(&p->lock));
 	assert(p->state == PROC_WAIT);
 	proc *cp = p->waitchild;
-	if (cp && cp->state == PROC_STOP) {
+	if (cp && (cp->state == PROC_STOP || cp->state == PROC_BLOCK)) {
 		// child is stopped
 		p->waitchild = NULL;
 	}
@@ -461,6 +471,7 @@ void gcc_noreturn
 proc_block(trapframe *tf, proc *p)
 {
 	proc *cp = proc_cur();
+//	cprintf("[proc block] cp %p p %p\n", cp, p);
 	assert(cp->state == PROC_RUN && cp->runcpu == cpu_cur());
 
 	spinlock_acquire(&cp->lock);

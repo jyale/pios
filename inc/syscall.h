@@ -167,7 +167,31 @@ sys_ret(void)
 	asm volatile("int %0" : :
 		"i" (T_SYSCALL),
 		"a" (SYS_RET),
-		"c" (0));
+		"d" (0));
+}
+
+static void gcc_inline
+sys_send(uint64_t msgid, void *src, void *dst, size_t size)
+{
+	asm volatile("int %0" :
+		: "i" (T_SYSCALL),
+		  "a" (SYS_PUT | SYS_REMOTE),
+		  "b" (0),
+		  "d" (msgid),
+		  "S" (src),
+		  "D" (dst),
+		  "c" (size)
+		: "cc", "memory");
+}
+
+static void gcc_inline
+sys_recv(uint64_t msgid)
+{
+	asm volatile("int %0" :
+		: "i" (T_SYSCALL),
+		  "a" (SYS_RET),
+		  "d" (msgid)
+		: "cc", "memory");
 }
 
 #if LAB >= 9

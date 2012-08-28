@@ -11,36 +11,180 @@
 
 void proctest()
 {
-	sys_get(SYS_PERM | SYS_RW, 0, NULL, NULL, VM_SCRATCHLO, 4096);
+	sys_get(SYS_PERM | SYS_RW, 0, NULL, NULL, (void *)VM_SCRATCHLO, 4096);
 	int pid = fork();
 	if (pid == 0) {
 		char str[] = "abcde";
-		memmove(VM_SCRATCHLO, str, 5);
-		cprintf("MOD %s\n", str);
+		char emp[] = "_____";
+		char *tmp = (char *)VM_SCRATCHLO;
+		
+		// RET to parent
+		memmove(tmp, str, 6);
+		cprintf("RET\n\t%s\n", tmp);
 		sys_ret();
+
+		// read pushed string
+		cprintf("pushed\n\t%s\n", tmp);
+		// set lower label and clearance
 		tag_t t;
+		t.cat = 1; t.level = LVL_OUTONLY; t.time = 1;
+		sys_set_label(t);
+		sys_set_clearance(t);
+		memmove(tmp, str, 6);
+		cprintf("RET LO\n\t%s\n", tmp);
+		sys_ret();
+
+		// read pushed string
+		cprintf("pushed\n\t%s\n", tmp);
+		// set higher label and clearance
 		t.cat = 1; t.level = LVL_INONLY; t.time = 1;
 		sys_set_label(t);
-		char str2[] = "ABCDE";
-		memmove(VM_SCRATCHLO, str2, 5);
-		cprintf("MOD2 %s\n", str2);
+		sys_set_clearance(t);
+		memmove(tmp, str, 6);
+		cprintf("RET HI\n\t%s\n", tmp);
 		sys_ret();
-		cprintf("child run\n");
+
+		// read pushed string
+		cprintf("pushed\n\t%s\n", tmp);
+		cprintf("child done\n");
 		sys_ret();
 	} else {
 		char str[] = "12345";
-		cprintf("BEFORE %s\n", str);
-		sys_get(SYS_COPY, pid, NULL, VM_SCRATCHLO, VM_SCRATCHLO, 4096);
-		memmove(str, VM_SCRATCHLO, 5);
-		cprintf("AFTER %s\n", str);
-		sys_put(SYS_START, pid, NULL, VM_USERLO, VM_USERLO, 0);
-		sys_get(SYS_COPY, pid, NULL, VM_SCRATCHLO, VM_SCRATCHLO, 4096);
-		memmove(str, VM_SCRATCHLO, 5);
-		cprintf("AFTER2 %s\n", str);
-		cprintf("waiting\n");
-		sys_put(SYS_START, pid, NULL, VM_USERLO, VM_USERLO, 0);
-		sys_get(0, pid, NULL, VM_USERLO, VM_USERLO, 0);
-		cprintf("parent run\n");
+		char emp[] = "-----";
+		char *tmp = (char *)VM_SCRATCHLO;
+
+		// GET from child
+		memmove(tmp, emp, 6);
+		cprintf("before GET\n\t%s\n", tmp);
+		sys_get(SYS_COPY, pid, NULL, tmp, tmp, 4096);
+		cprintf("after GET\n\t%s\n", tmp);
+
+		// PUT to child
+		memmove(tmp, str, 6);
+		cprintf("PUT\n\t%s\n", tmp);
+		sys_put(SYS_COPY | SYS_START, pid, NULL, tmp, tmp, 4096);
+
+		// GET from child (child has lower label)
+		memmove(tmp, emp, 6);
+		cprintf("before GET from LO\n\t%s\n", tmp);
+		sys_get(SYS_COPY, pid, NULL, tmp, tmp, 4096);
+		cprintf("after GET from LO\n\t%s\n", tmp);
+
+		// PUT to child (child has lower label)
+		memmove(tmp, str, 6);
+		cprintf("PUT to LO\n\t%s\n", tmp);
+		sys_put(SYS_COPY | SYS_START, pid, NULL, tmp, tmp, 4096);
+
+		// GET from child (child has higher label)
+		memmove(tmp, emp, 6);
+		cprintf("before GET from HI\n\t%s\n", tmp);
+		sys_get(SYS_COPY, pid, NULL, tmp, tmp, 4096);
+		cprintf("after GET from HI\n\t%s\n", tmp);
+
+		// PUT to child (child has higher label)
+		memmove(tmp, str, 6);
+		cprintf("PUT to HI\n\t%s\n", tmp);
+		sys_put(SYS_COPY | SYS_START, pid, NULL, tmp, tmp, 4096);
+
+		// let child finish first
+		sys_get(0, pid, NULL, tmp, tmp, 0);
+		cprintf("parent done\n");
+	}
+}
+
+// identical to proctest(), using send/recv instead of put/get
+void rawtest()
+{
+	sys_get(SYS_PERM | SYS_RW, 0, NULL, NULL, (void *)VM_SCRATCHLO, 4096);
+	int pid = fork();
+	if (pid == 0) {
+		char str[] = "abcde";
+		char emp[] = "_____";
+		char *tmp = (char *)VM_SCRATCHLO;
+		
+		// RET to parent
+		memmove(tmp, str, 6);
+		cprintf("RET\n\t%s\n", tmp);
+		sys_ret();
+
+		// RECV
+		cprintf("before RECV\n");
+		sys_recv(1);
+		cprintf("RECV\n\t%s\n", tmp);
+
+		// set lower label and clearance
+		tag_t t;
+		t.cat = 1; t.level = LVL_OUTONLY; t.time = 1;
+		sys_set_label(t);
+		sys_set_clearance(t);
+		memmove(tmp, str, 6);
+		cprintf("RET LO\n\t%s\n", tmp);
+		sys_ret();
+
+		// RECV
+		cprintf("before RECV\n");
+		sys_recv(1);
+		cprintf("RECV\n\t%s\n", tmp);
+
+		// set higher label and clearance
+		t.cat = 1; t.level = LVL_INONLY; t.time = 1;
+		sys_set_label(t);
+		sys_set_clearance(t);
+		memmove(tmp, str, 6);
+		cprintf("RET HI\n\t%s\n", tmp);
+		sys_ret();
+
+		// RECV
+		cprintf("before RECV\n");
+		sys_recv(1);
+		cprintf("RECV\n\t%s\n", tmp);
+
+		cprintf("child done\n");
+		sys_ret();
+	} else {
+		char str[] = "12345";
+		char emp[] = "-----";
+		char *tmp = (char *)VM_SCRATCHLO;
+
+		// GET from child
+		memmove(tmp, emp, 6);
+		cprintf("before GET\n\t%s\n", tmp);
+		sys_get(SYS_COPY, pid, NULL, tmp, tmp, 4096);
+		cprintf("after GET\n\t%s\n", tmp);
+
+		// SEND to child
+		sys_put(SYS_START, pid, NULL, tmp, tmp, 0);
+		memmove(tmp, str, 6);
+		cprintf("SEND\n\t%s\n", tmp);
+		sys_send(pid, tmp, tmp, 4096);
+
+		// GET from child (child has lower label)
+		memmove(tmp, emp, 6);
+		cprintf("before GET from LO\n\t%s\n", tmp);
+		sys_get(SYS_COPY, pid, NULL, tmp, tmp, 4096);
+		cprintf("after GET from LO\n\t%s\n", tmp);
+
+		// SEND to child (child has lower label)
+		sys_put(SYS_START, pid, NULL, tmp, tmp, 0);
+		memmove(tmp, str, 6);
+		cprintf("SEND to LO\n\t%s\n", tmp);
+		sys_send(pid, tmp, tmp, 4096);
+
+		// GET from child (child has higher label)
+		memmove(tmp, emp, 6);
+		cprintf("before GET from HI\n\t%s\n", tmp);
+		sys_get(SYS_COPY, pid, NULL, tmp, tmp, 4096);
+		cprintf("after GET from HI\n\t%s\n", tmp);
+
+		// SEND to child (child has higher label)
+		sys_put(SYS_START, pid, NULL, tmp, tmp, 0);
+		memmove(tmp, str, 6);
+		cprintf("SEND to HI\n\t%s\n", tmp);
+		sys_send(pid, tmp, tmp, 4096);
+
+		// let child finish first
+		sys_get(0, pid, NULL, tmp, tmp, 0);
+		cprintf("parent done\n");
 	}
 }
 #if 0
@@ -237,6 +381,7 @@ void usage ()
 {
 	cprintf("usage: testlabel [pbfdni]\n");
 	cprintf("\tp: proctest\n");
+	cprintf("\tr: rawtest\n");
 	cprintf("\tb: basictest\n");
 	cprintf("\tf: forktest\n");
 	cprintf("\td: delaytest\n");
@@ -254,6 +399,9 @@ int main (int argc, char **argv)
 		switch (argv[0][0]) {
 			case 'p':
 				proctest();
+				break;
+			case 'r':
+				rawtest();
 				break;
 #if 0
 			case 'b':

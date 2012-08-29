@@ -5,6 +5,8 @@
 #include <inc/label.h>
 #include <inc/args.h>
 
+#include <lib/msg.h>
+
 #define LBL 0xdad
 #define LBL_CHILD 0xccc
 #define TIC 20000000
@@ -210,39 +212,61 @@ void basictest ()
 	sys_send(LBL_CHILD, tmp, tmp, 4096);
 	sys_recv(LBL_CHILD);
 }
-#if 0
+
 void forktest ()
 {
 	int pid = fork();
 	if (pid == 0) {
-		int flag = sys_mid_register(LBL_CHILD);
+		listen(LBL_CHILD);
+		cprintf("child start\n");
+		sys_ret();
 		char str[] = "12345";
 		char tmp[] = "__________";
 		size_t len;
 
-		len = sys_msg_send(str, 5, LBL);
+		len = send(LBL, str, 5);
 		cprintf("child send len %llu (should send something)\n", len);
 
-		cprintf("child recv (should wait)\n");
-		len = sys_msg_recv(tmp, 10, LBL);
+		len = recv(LBL, tmp, 10);
 		cprintf("child recv len %llu %s (should recv somthing)\n", len, tmp);
+
+		sys_ret();
+
+		char tmp2[] = "__________";
+		len = recv(LBL, tmp2, 10);
+		cprintf("child recv len %llu %s (should recv somthing)\n", len, tmp2);
+
+		len = send(LBL, str, 5);
+		cprintf("child send len %llu (should send something)\n", len);
 	} else {
-		int flag = sys_mid_register(LBL);
+		listen(LBL);
+		cprintf("parent start\n");
+		sys_get(SYS_COPY, pid, NULL, VM_USERLO, VM_USERLO, 0);
+		sys_put(SYS_START, pid, NULL, VM_USERLO, VM_USERLO, 0);
 		char str[] = "abcde";
 		char tmp[] = "----------";
 		size_t len;
 
-		cprintf("parent recv (should wait)\n");
-		len = sys_msg_recv(tmp, 10, LBL_CHILD);
+		len = recv(LBL_CHILD, tmp, 10);
 		cprintf("parent recv len %llu %s (should recv somthing)\n", len, tmp);
 
-		len = sys_msg_send(str, 5, LBL_CHILD);
+		len = send(LBL_CHILD, str, 5);
 		cprintf("parent send len %llu (should send something)\n", len);
+
+		sys_get(SYS_COPY, pid, NULL, VM_USERLO, VM_USERLO, 0);
+		sys_put(SYS_START, pid, NULL, VM_USERLO, VM_USERLO, 0);
+
+		char tmp2[] = "----------";
+		len = send(LBL_CHILD, str, 5);
+		cprintf("parent send len %llu (should send something)\n", len);
+
+		len = recv(LBL_CHILD, tmp2, 10);
+		cprintf("parent recv len %llu %s (should recv somthing)\n", len, tmp2);
 
 		wait(NULL);
 	}
 }
-
+#if 0
 void delaytest ()
 {
 	int pid = fork();
@@ -413,10 +437,10 @@ int main (int argc, char **argv)
 			case 'b':
 				basictest();
 				break;
-#if 0
 			case 'f':
 				forktest();
 				break;
+#if 0
 			case 'd':
 				delaytest();
 				break;

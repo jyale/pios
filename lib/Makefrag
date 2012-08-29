@@ -29,7 +29,8 @@ LIB_SRCFILES :=		lib/debug.c \
 			lib/fprintf.c \
 			lib/strerror.c \
 			lib/readline.c \
-			lib/thread.c
+			lib/thread.c \
+			lib/msg.c
 ifdef LAB9
 # Additional C library files not needed by PIOS itself
 # but needed in many applications we may wish to run on PIOS.

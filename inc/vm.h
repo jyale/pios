@@ -129,8 +129,8 @@
 #define VM_SCRATCHLO	0x7d0000000000
 
 // labelled message address space
-#define VM_LABELHI	0x7d0000000000
-#define VM_LABELLO	0x7c0000000000
+#define VM_MSGHI	0x7d0000000000
+#define VM_MSGLO	0x7c0000000000
 
 #if LAB >= 9
 #ifdef PIOS_SPMC

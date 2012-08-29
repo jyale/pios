@@ -115,7 +115,7 @@ void rawtest()
 
 		// RECV
 		cprintf("before RECV\n");
-		sys_recv(1);
+		sys_recv(LBL);
 		cprintf("RECV\n\t%s\n", tmp);
 
 		// set lower label and clearance
@@ -129,7 +129,7 @@ void rawtest()
 
 		// RECV
 		cprintf("before RECV\n");
-		sys_recv(1);
+		sys_recv(LBL);
 		cprintf("RECV\n\t%s\n", tmp);
 
 		// set higher label and clearance
@@ -142,7 +142,7 @@ void rawtest()
 
 		// RECV
 		cprintf("before RECV\n");
-		sys_recv(1);
+		sys_recv(LBL);
 		cprintf("RECV\n\t%s\n", tmp);
 
 		cprintf("child done\n");
@@ -167,7 +167,7 @@ void rawtest()
 		sys_put(SYS_START, pid, NULL, tmp, tmp, 0);
 		memmove(tmp, str, 6);
 		cprintf("SEND\n\t%s\n", tmp);
-		sys_send(pid, tmp, tmp, 4096);
+		sys_send(LBL_CHILD, tmp, tmp, 4096);
 
 		// GET from child (child has lower label)
 		memmove(tmp, emp, 6);
@@ -179,7 +179,7 @@ void rawtest()
 		sys_put(SYS_START, pid, NULL, tmp, tmp, 0);
 		memmove(tmp, str, 6);
 		cprintf("SEND to LO\n\t%s\n", tmp);
-		sys_send(pid, tmp, tmp, 4096);
+		sys_send(LBL_CHILD, tmp, tmp, 4096);
 
 		// GET from child (child has higher label)
 		memmove(tmp, emp, 6);
@@ -191,7 +191,7 @@ void rawtest()
 		sys_put(SYS_START, pid, NULL, tmp, tmp, 0);
 		memmove(tmp, str, 6);
 		cprintf("SEND to HI\n\t%s\n", tmp);
-		sys_send(pid, tmp, tmp, 4096);
+		sys_send(LBL_CHILD, tmp, tmp, 4096);
 
 		// let child finish first
 		sys_get(0, pid, NULL, tmp, tmp, 0);
@@ -199,23 +199,18 @@ void rawtest()
 	}
 	wait(NULL);
 }
-#if 0
+
 void basictest ()
 {
-	int flag = sys_mid_register(LBL);
-	char str[] = "1234567890";
-	char tmp[] = "----------";
-	size_t len;
-	int i, j;
-	len = sys_msg_send(str, 5, LBL);
-	cprintf("send len %llu (should send somthing)\n", len);
-	len = sys_msg_recv(tmp, 10, LBL);
-	cprintf("recv len %llu %s (should recv something)\n", len, tmp);
-	cprintf("recv (should wait forever)\n");
-	len = sys_msg_recv(tmp, 10, LBL);
-	cprintf("recv len %llu %s (should recv nothing)\n", len, tmp);
+	sys_get(SYS_PERM | SYS_RW, 0, NULL, NULL, (void *)VM_SCRATCHLO, 4096);
+	sys_mid_register(LBL);
+	char *tmp = (char *)VM_SCRATCHLO;
+	sys_send(LBL, tmp, tmp, 4096);
+	sys_recv(LBL);
+	sys_send(LBL_CHILD, tmp, tmp, 4096);
+	sys_recv(LBL_CHILD);
 }
-
+#if 0
 void forktest ()
 {
 	int pid = fork();
@@ -415,10 +410,10 @@ int main (int argc, char **argv)
 			case 'r':
 				rawtest();
 				break;
-#if 0
 			case 'b':
 				basictest();
 				break;
+#if 0
 			case 'f':
 				forktest();
 				break;

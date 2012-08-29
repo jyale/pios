@@ -171,7 +171,7 @@ do_put(trapframe *tf, uint32_t cmd)
 	if (cmd & SYS_REMOTE) {
 		// find receiver process
 		cp = mid_find(tf->rdx);
-		if (cp == &proc_null) {
+		if (cp == &proc_null || cp == p) {
 			// no matching process
 			cmd = 0;
 			goto exit;
@@ -454,8 +454,9 @@ do_ret(trapframe *tf)
 		proc_ret(tf, 1);	// Complete syscall insn and return to parent
 	} else {
 		// block process
+		proc *cp = proc_cur();
 		proc *p = mid_find(tf->rdx);
-		if (p == &proc_null) {
+		if (p == &proc_null || p == cp) {
 			// no matching process
 			trap_return(tf);
 		}

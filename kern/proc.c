@@ -32,6 +32,9 @@ proc proc_null;		// null process - just leave it initialized to 0
 
 proc *proc_root;	// root process, once it's created in init()
 
+hashtable *midtable;
+static spinlock midlock;
+
 #if SOL >= 2
 static spinlock readylock;	// Spinlock protecting ready queue
 static proc *readyhead;		// Head of ready queue
@@ -57,6 +60,8 @@ proc_init(void)
 	spinlock_init(&pacinglock);
 	pacingtail = &pacinghead;
 	pacinghead = NULL;
+
+	midtable = table_alloc();
 #else
 	// your module initialization code here
 #endif
@@ -514,6 +519,45 @@ proc_set_clearance(proc *p, tag_t tag)
 //	cprintf("[proc set clearance] new ");
 //	label_print(&p->clearance);
 	return 0;
+}
+
+int
+mid_register(uint64_t mid, proc *p)
+{
+	cprintf("[mid reg] mid %llx proc %p pml4 %p\n", mid, p, p->pml4);
+//	assert((mid >> MID_PREFIX_SHIFT) == mid_prefix || (mid >> MID_PREFIX_SHIFT) == MID_PREFIX_RESERVED);
+	spinlock_acquire(&midlock);
+	p->mid = mid;
+	int err = table_insert(midtable, mid, (uint64_t)p);
+	spinlock_release(&midlock);
+//	cprintf("[mid reg] err %d\n", err);
+
+	return err;
+}
+
+void
+mid_unregister(proc *p)
+{
+	spinlock_acquire(&midlock);
+	uint64_t mid = p->mid;
+	cprintf("[mid unreg] mid %llx proc %p\n", mid, p);
+	if (mid != 0) {
+		table_insert(midtable, mid, &proc_null);
+	}
+	spinlock_release(&midlock);
+}
+
+proc *
+mid_find(uint64_t mid)
+{
+	proc *p = NULL;
+	spinlock_acquire(&midlock);
+	int err = table_find(midtable, mid, (uint64_t *)&p);
+	spinlock_release(&midlock);
+
+	if (err)
+		return &proc_null;
+	return p;
 }
 
 // Helper functions for proc_check()

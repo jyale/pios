@@ -47,7 +47,11 @@ void proctest()
 		// read pushed string
 		cprintf("pushed\n\t%s\n", tmp);
 		cprintf("child done\n");
-		sys_ret();
+		
+		// restore label and clearance
+		t.cat = 1; t.level = LVL_DEFAULT; t.time = 0;
+		sys_set_label(t);
+		sys_set_clearance(t);
 	} else {
 		char str[] = "12345";
 		char emp[] = "-----";
@@ -90,6 +94,7 @@ void proctest()
 		sys_get(0, pid, NULL, tmp, tmp, 0);
 		cprintf("parent done\n");
 	}
+	wait(NULL);
 }
 
 // identical to proctest(), using send/recv instead of put/get
@@ -101,6 +106,7 @@ void rawtest()
 		char str[] = "abcde";
 		char emp[] = "_____";
 		char *tmp = (char *)VM_SCRATCHLO;
+		sys_mid_register(LBL_CHILD);
 		
 		// RET to parent
 		memmove(tmp, str, 6);
@@ -140,11 +146,16 @@ void rawtest()
 		cprintf("RECV\n\t%s\n", tmp);
 
 		cprintf("child done\n");
-		sys_ret();
+		
+		// restore label and clearance
+		t.cat = 1; t.level = LVL_DEFAULT; t.time = 0;
+		sys_set_label(t);
+		sys_set_clearance(t);
 	} else {
 		char str[] = "12345";
 		char emp[] = "-----";
 		char *tmp = (char *)VM_SCRATCHLO;
+		sys_mid_register(LBL);
 
 		// GET from child
 		memmove(tmp, emp, 6);
@@ -186,6 +197,7 @@ void rawtest()
 		sys_get(0, pid, NULL, tmp, tmp, 0);
 		cprintf("parent done\n");
 	}
+	wait(NULL);
 }
 #if 0
 void basictest ()

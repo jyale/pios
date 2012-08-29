@@ -146,6 +146,8 @@ waitpid(pid_t pid, int *status, int options)
 				*status = WSIGNALED | ps.tf.trapno;
 
 			done:
+			// unregister mid for child
+			sys_mid_unregister(pid);
 			// Clear out the child's address space.
 			sys_put(SYS_ZERO, pid, NULL, ALLVA, ALLVA, ALLSIZE);
 			files->child[pid].state = PROC_FREE;

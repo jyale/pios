@@ -19,6 +19,7 @@
 #include <inc/label.h>
 
 #include <kern/spinlock.h>
+#include <kern/hashtable.h>
 #if LAB >= 3
 #include <kern/pmap.h>
 #endif
@@ -89,6 +90,7 @@ typedef struct proc {
 
 	int32_t		pmcmax;		// Max insn count set using perf ctrs
 #endif
+	uint64_t mid;
 	label_t		label;
 	label_t		clearance;
 } proc;
@@ -102,6 +104,8 @@ extern proc proc_null;
 // Special root process - the only one that can do direct external I/O.
 extern proc *proc_root;
 
+// msgID->proc* mapping
+extern hashtable *midtable;
 
 void proc_init(void);	// Initialize process management code
 proc *proc_alloc(proc *p, uint32_t cn);	// Allocate new child
@@ -118,6 +122,10 @@ void proc_block(trapframe *tf, proc *p) gcc_noreturn;	// block process
 
 int proc_set_label(proc *p, tag_t tag);
 int proc_set_clearance(proc *p, tag_t tag);
+
+int mid_register(uint64_t mid, proc *p);
+void mid_unregister(proc *p);
+proc *mid_find(uint64_t mid);
 
 void proc_check(void);			// Check process code
 

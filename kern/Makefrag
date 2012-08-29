@@ -31,6 +31,7 @@ KERN_SRCFILES :=	kern/entry.S \
 			kern/file.c \
 			kern/net.c \
 			kern/label.c \
+			kern/hashtable.c \
 			dev/video.c \
 			dev/kbd.c \
 			dev/serial.c \

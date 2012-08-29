@@ -166,18 +166,21 @@ do_put(trapframe *tf, uint32_t cmd)
 			net_migrate(tf, node, 0);	// abort syscall and migrate
 #endif // SOL >= 5
 	}
-	spinlock_acquire(&p->lock);
 
 	proc *cp = NULL;
 	if (cmd & SYS_REMOTE) {
-		// TODO: find receiver process
-		// FIXME: now choose child
-		uint32_t cn = tf->rdx & 0xff;
-		cp = p->child[cn];
-		if (!cp) {
-			spinlock_release(&p->lock);
+		// find receiver process
+		cp = mid_find(tf->rdx);
+		if (cp == &proc_null) {
+			// no matching process
+			cmd = 0;
 			goto exit;
 		}
+	}
+
+	spinlock_acquire(&p->lock);
+
+	if (cmd & SYS_REMOTE) {
 		// SYS_REMOTE = SYS_COPY | SYS_START for remote process
 		cmd = SYS_COPY | SYS_START;
 	} else {
@@ -451,9 +454,12 @@ do_ret(trapframe *tf)
 		proc_ret(tf, 1);	// Complete syscall insn and return to parent
 	} else {
 		// block process
-		proc *cp = proc_cur();
-		// TODO: find sender
-		proc_block(tf, cp->parent);
+		proc *p = mid_find(tf->rdx);
+		if (p == &proc_null) {
+			// no matching process
+			trap_return(tf);
+		}
+		proc_block(tf, p);
 	}
 }
 
@@ -514,6 +520,31 @@ do_label(trapframe *tf)
 	spinlock_release(&p->lock);
 	trap_return(tf);
 }
+
+static void gcc_noreturn
+do_mid(trapframe *tf)
+{
+	uint64_t mid = tf->rcx;
+	pid_t pid = tf->rdx;
+
+	proc *p = proc_cur();
+	if (pid >= 0) {
+		// valid pid, perform mid_unregister
+		if (pid) {
+			spinlock_acquire(&p->lock);
+			proc *cp = p->child[pid];
+			spinlock_release(&p->lock);
+			p = cp;
+		}
+		mid_unregister(p);
+	} else {
+		// invalid pid, perform mid_register
+		tf->rax = mid_register(mid, p);
+	}
+
+	trap_return(tf);
+}
+
 #endif	// SOL >= 2
 
 // Common function to handle all system calls -
@@ -535,6 +566,7 @@ syscall(trapframe *tf)
 	case SYS_NCPU:	return do_ncpu(tf);
 #endif
 	case SYS_LABEL:	return do_label(tf);
+	case SYS_MID:	return do_mid(tf);
 #else	// not SOL >= 2
 	// Your implementations of SYS_PUT, SYS_GET, SYS_RET here...
 #endif	// not SOL >= 2

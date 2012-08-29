@@ -28,6 +28,7 @@
 #define SYS_NCPU	0x00000005	// Set max number of running CPUs
 #endif
 #define SYS_LABEL	0x00000006	// set label or clearance
+#define SYS_MID		0x00000007	// register/unregister mid
 
 #define SYS_START	0x00000010	// Put: start child running
 #define SYS_REMOTE	0x00000020	// Put: put to remote process
@@ -268,6 +269,30 @@ sys_set_clearance(tag_t tag)
 		  "d" (tag)
 		: "cc", "memory");
 	return ret;
+}
+
+static int gcc_inline
+sys_mid_register(uint64_t mid)
+{
+	bool ret;
+	asm volatile("int %1"
+		: "=a" (ret)
+		: "i" (T_SYSCALL),
+		  "a" (SYS_MID),
+		  "c" (mid),
+		  "d" (-1)
+		: "cc", "memory");
+	return ret;
+}
+
+static void gcc_inline
+sys_mid_unregister(pid_t pid)
+{
+	asm volatile("int %0" :
+		: "i" (T_SYSCALL),
+		  "a" (SYS_MID),
+		  "d" (pid)
+		: "cc", "memory");
 }
 
 #endif /* !__ASSEMBLER__ */

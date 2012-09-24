@@ -5,8 +5,7 @@
 #include <inc/vm.h>
 #include <inc/syscall.h>
 #include <inc/string.h>
-
-#include <lib/msg.h>
+#include <inc/msg.h>
 
 static int ready = 0;
 

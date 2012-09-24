@@ -4,8 +4,7 @@
 #include <inc/vm.h>
 #include <inc/label.h>
 #include <inc/args.h>
-
-#include <lib/msg.h>
+#include <inc/msg.h>
 
 #define LBL 0xdad
 #define LBL_CHILD 0xccc

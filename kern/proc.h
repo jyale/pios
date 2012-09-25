@@ -58,7 +58,7 @@ typedef struct proc {
 	struct proc	*readynext;	// chain on ready queue
 	struct proc	*pacingnext;	// chain on pacing queue
 	struct cpu	*runcpu;	// cpu we're running on if running
-	struct proc	*waitchild;	// child proc if waiting for child
+	struct proc	*waitproc;	// proc waiting for
 	uint64_t	ts;		// pacing timestamp
 
 	// Save area for user-visible state when process is not running.
@@ -118,7 +118,7 @@ void proc_sched(void) gcc_noreturn;	// Find and run some ready process
 void proc_run(proc *p) gcc_noreturn;	// Run a specific process
 void proc_yield(trapframe *tf) gcc_noreturn;	// Yield to another process
 void proc_ret(trapframe *tf, int entry) gcc_noreturn;	// Return to parent
-void proc_block(trapframe *tf, proc *p) gcc_noreturn;	// block process
+void proc_block(proc *p, proc *cp, trapframe *tf) gcc_noreturn; // block cp, wait for p
 
 int proc_set_label(proc *p, tag_t tag);
 int proc_set_clearance(proc *p, tag_t tag);

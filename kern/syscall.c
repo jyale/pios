@@ -182,7 +182,7 @@ do_put(trapframe *tf, uint32_t cmd)
 
 	if (cmd & SYS_REMOTE) {
 		// SYS_REMOTE = SYS_COPY | SYS_START for remote process
-		cmd = SYS_COPY | SYS_START;
+		cmd = SYS_COPY | SYS_START | SYS_REMOTE;
 	} else {
 		// Find the named child process; create if it doesn't exist
 		uint32_t cn = tf->rdx & 0xff;
@@ -209,8 +209,20 @@ do_put(trapframe *tf, uint32_t cmd)
 	}
 
 	// Synchronize with child if necessary.
-	if ((cp->state != PROC_STOP && cp->state != PROC_BLOCK) || ts != 0)
-		proc_wait(p, cp, tf, ts);
+	if (cmd & SYS_REMOTE) {
+		if (cp->state != PROC_BLOCK || ts != 0) {
+			cprintf("proc %p send wait for proc %p non-blocked\n", p, cp);
+			proc_wait(p, cp, tf, ts);
+		} else if (cp->waitproc != p) {
+			cprintf("proc %p send wait for proc %p blocked for other proc\n", p, cp);
+			proc_wait(p, cp, tf, ts);
+		}
+	} else {
+		if (cp->state != PROC_STOP || ts != 0) {
+			cprintf("proc %p put wait for proc %p non-stopped\n", p, cp);
+			proc_wait(p, cp, tf, ts);
+		}
+	}
 
 	// WWY: do label checking
 	if (less.level) {
@@ -460,7 +472,8 @@ do_ret(trapframe *tf)
 			// no matching process
 			trap_return(tf);
 		}
-		proc_block(tf, p);
+		cprintf("proc %p recv block for proc %p\n", cp, p);
+		proc_block(p, cp ,tf);
 	}
 }
 

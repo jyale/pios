@@ -136,6 +136,7 @@ proc_ready(proc *p)
 
 	p->state = PROC_READY;
 	p->readynext = NULL;
+	p->waitproc = NULL;
 	*readytail = p;
 	readytail = &p->readynext;
 
@@ -209,7 +210,7 @@ proc_wait(proc *p, proc *cp, trapframe *tf, uint64_t ts)
 
 	p->state = PROC_WAIT;
 	p->runcpu = NULL;
-	p->waitchild = cp;	// remember what child we're waiting on
+	p->waitproc = cp;	// remember what child we're waiting on
 	p->ts = ts;
 	proc_save(p, tf, 0);	// save process state before INT instruction
 
@@ -241,16 +242,16 @@ proc_wake(proc *p, uint64_t time)
 //	cprintf("[proc wake] p %p t %llx\n", p, time);
 	assert(spinlock_holding(&p->lock));
 	assert(p->state == PROC_WAIT);
-	proc *cp = p->waitchild;
+	proc *cp = p->waitproc;
 	if (cp && (cp->state == PROC_STOP || cp->state == PROC_BLOCK)) {
 		// child is stopped
-		p->waitchild = NULL;
+		p->waitproc = NULL;
 	}
 	if (time > p->ts) {
 		// timestamp has passed
 		p->ts = 0;
 	}
-	if (p->waitchild == NULL && p->ts == 0) {
+	if (p->waitproc == NULL && p->ts == 0) {
 		proc_ready(p);
 	}
 }
@@ -461,7 +462,7 @@ proc_ret(trapframe *tf, int entry)
 	proc_save(cp, tf, entry);	// save process state after INT insn
 
 	// If parent is waiting to sync with us, wake it up.
-	if (p->state == PROC_WAIT && p->waitchild == cp) {
+	if (p->state == PROC_WAIT && p->waitproc == cp) {
 		proc_wake(p, 0);
 	}
 
@@ -473,21 +474,21 @@ proc_ret(trapframe *tf, int entry)
 }
 
 void gcc_noreturn
-proc_block(trapframe *tf, proc *p)
+proc_block(proc *p, proc *cp, trapframe *tf)
 {
-	proc *cp = proc_cur();
 //	cprintf("[proc block] cp %p p %p\n", cp, p);
 	assert(cp->state == PROC_RUN && cp->runcpu == cpu_cur());
 
 	spinlock_acquire(&cp->lock);
 	cp->state = PROC_BLOCK;
 	cp->runcpu = NULL;
+	cp->waitproc = p;
 	proc_save(cp, tf, 1);
 	spinlock_release(&cp->lock);
 
 	// if sender is waiting to sync with us, wake it up
 	spinlock_acquire(&p->lock);
-	if (p->state == PROC_WAIT && p->waitchild == cp) {
+	if (p->state == PROC_WAIT && p->waitproc == cp) {
 		proc_wake(p, 0);
 	}
 	spinlock_release(&p->lock);

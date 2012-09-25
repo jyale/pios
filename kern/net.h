@@ -160,6 +160,7 @@ void net_init(void);
 void net_rx(void *ethpkt, int len);
 void net_tick(void);
 void gcc_noreturn net_migrate(struct trapframe *tf, uint8_t node, int entry);
+void gcc_noreturn net_send(struct trapframe *tf, uint64_t msgid, void *src, void *dst, size_t size);
 
 #endif // !PIOS_KERN_NET_H
 #endif // LAB >= 2

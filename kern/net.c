@@ -25,6 +25,10 @@ uint8_t net_mac[6];	// My MAC address from the Ethernet card
 spinlock net_lock;
 proc *net_migrlist;	// List of currently migrating processes
 proc *net_pulllist;	// List of processes currently pulling a page
+proc *net_sendlist;	// List of currently sending processes
+proc *net_recvlist;	// List of currently recving processes
+
+hashtable *net_waitmap;
 
 #define NET_ETHERTYPE	0x9876	// Claim this ethertype for our packets
 
@@ -714,6 +718,293 @@ net_pullpte(proc *p, uint32_t *pte, int pglevel)
 	//   and return 0 indicating we have to wait for the pull to complete.
 	panic("net_pullpte not implemented");
 #endif	// ! SOL >= 5
+}
+
+// send to remote node
+void gcc_noreturn
+net_send(struct trapframe *tf, uint64_t msgid, intptr_t srcaddr, intptr_t dstaddr, size_t size)
+{
+	proc *p = proc_cur();
+	proc_save(p, tf, 1);
+
+	assert((srcaddr & 0xfff) == 0);
+	assert((dstaddr & 0xfff) == 0);
+	assert((size & 0xfff) == 0);
+	uint8_t dstnode = msgid >> 56;
+	assert(dstnode > 0 && dstnode <= NET_MAXNODES && dstnode != net_node);
+
+	spinlock_acquire(&net_lock);
+	assert(p->state == PROC_RUN);
+	assert(p->remotenext == NULL);
+	p->state = PROC_WAIT;
+	p->waitproc = &proc_null;
+	p->remoteid = msgid;
+	p->remotenext = net_sendlist;
+	p->remoteva = srcaddr;
+	p->remotelimit = srcaddr + size;
+	net_sendlist = p;
+
+	net_txsendrq(p);
+
+	spinlock_release(&net_lock);
+	proc_sched();
+}
+
+void
+net_txsendrq(proc *p, intptr_t dstaddr)
+{
+	assert(p->state == PROC_WAIT);
+	assert(p->waitproc == &proc_null);
+	assert(spinlock_holding(&net_lock));
+
+	net_sendrq rq;
+	net_ethsetup(&rq.eth, p->remoteid >> 56);
+	rq.type = NET_SENDRQ;
+	rq.srcid = p->mid;
+	rq.dstid = p->remoteid;
+	rq.srcaddr = p->remoteva;
+	rq.dstaddr = dst;
+	rq.size = p->remotelimit - p->remoteid;
+	memcpy(&rq.label, &p->label, sizeof(label_t));
+	net_tx(&rq, sizeof(rq), NULL, 0);
+}
+
+void
+net_rxsendrq(net_sendrq *rq)
+{
+	uint8_t srcnode = rq->eth.src[5];
+	assert(srcnode > 0 && srcnode <= NET_MAXNODES && srcnode != net_node);
+	assert(srcnode == (rq->srcid >> 56));
+	assert(srcnode != (rq->dstid >> 56));
+
+	int ack = 1;
+	// find proc
+	proc *cp = mid_find(rq->dstid);
+	if (cp == NULL)
+		ack = 0;
+	tag_t less = label_leq_hi(&rq->label, &cp->clearance);
+	if (less.level)
+		ack = 0;
+	uint64_t ts = 0;
+	if (less.time) {
+		// wait until paced
+		uint64_t t = timer_read();
+		t = t * 1000000000 / TIMER_FREQ;	// convert to nanoseconds
+		ts = ROUNDUP(t, label_time(less.time));
+	}
+
+	// send sendrp
+	if (ack == 0) {
+		net_txsendrp(rq->srcid, rq->dstid, -1);
+		return;
+	}
+
+	net_txsendrp(rq->srcid, rq->dstid, -1);
+
+	if (cp->state != PROC_BLOCK || ts != 0) {
+		// wait & save
+		goto wait_save;
+	} else {
+		// check msgid cp waits for
+		waitid = 0;
+		if (waitid != rq->srcid) {
+			// wait & save
+			goto wait_save;
+		}
+	}
+
+	// start recv
+	net_recv()
+wait_save:
+	// wait & save
+	spinlock_acquire(&net_lock);
+	table_insert(net_waitmap, rq->srcid, rq->dstid);
+	spinlock_release(&net_lock);
+}
+
+void
+net_txsendrp(uint64_t srcid, uint64_t dstid, int8_t status)
+{
+	net_sendrp rp;
+	net_ethsetup(&rp.eth, srcid >> 56);
+	rp.type = NET_SENDRP;
+	rp.srcid = srcid;
+	rp.dstid = dstid;
+	rp.status = status;
+	net_tx(&rp, sizeof(rp), NULL, 0);
+}
+
+void
+net_rxsendrp(net_sendrp *rp)
+{
+	uint8_t dstnode = rp->eth.src[5];
+	assert(dstnode > 0 && dstnode <= NET_MAXNODES && dstnode != net_node);
+	assert(dstnode == (rp->dstid >> 56));
+	assert(dstnode != (rp->srcid >> 56));
+
+	// remove p from sendlist
+	spinlock_acquire(&net_lock);
+	proc *p = net_sendlist;
+	proc **pp = &net_sendlist;
+	for ( ; p != NULL; pp = &p->remotenext, p = p->remotenext) {
+		if (p->mid == rp->srcid && p->remoteid == rp->dstid) {
+			*pp = p->remotenext;
+			break;
+		}
+	}
+	spinlock_release(&net_lock);
+	// change state to PROC_SEND
+	p->state = PROC_SEND;
+}
+
+void
+net_recv(proc *cp, uint64_t srcid, uint64_t dstid, intptr_t srcaddr, intptr_t dstaddr, size_t size)
+{
+	assert(cp->state == PROC_BLOCK);
+	assert(cp->waitproc == &proc_null);
+	assert(cp->mid == dstid);
+
+	spinlock_acquire(&net_lock);
+	assert(cp->remotenext == NULL);
+	cp->remotenext = net_recvlist;
+	net_recvlist = cp;
+	cp->state = PROC_RECV;
+	cp->remoteid = srcid;
+	cp->remoteva = dstaddr;
+	cp->remotelimit = dstaddr + size;
+	cp->pullva = srcaddr;
+	cp->arrived = 0;
+
+	net_txrecvrq(cp);
+
+	spinlock_release(&net_lock);
+}
+
+void
+net_txrecvrq(proc *cp)
+{
+	assert(cp->state == PROC_RECV);
+	assert(spinlock_holding(&net_lock));
+
+	net_recvrq rq;
+	net_ethsetup(&rq.eth, cp->remoteid >> 56);
+	rq.srcid = cp->remoteid;
+	rq.dstid = cp->mid;
+	rq.srcaddr = cp->pullva;
+	rq.need = cp->arrived ^ 0x7;
+	net_tx(&rq, sizeof(rq), NULL, 0);
+}
+
+void
+net_rxrecvrq(net_recvrq *rq)
+{
+	assert(rq->type == NET_RECVRQ);
+	uint8_t dstnode = rq->eth.src[5];
+	assert(dstnode > 0 && dstnode <= NET_MAXNODES && dstnode != net_node);
+	assert(dstnode == (rp->dstid >> 56));
+	assert(dstnode != (rp->srcid >> 56));
+	assert((rq->srcaddr & 0xfff) == 0);
+
+	proc *p = mid_find(rq->srcid);
+	if (p == NULL)
+		goto nak;
+	if (p->state != PROC_SEND || p->remoteid != rq->dstid)
+		goto nak;
+	if (rq->srcaddr < p->remoteva || rq->srcaddr >= p->remotelimit)
+		goto nak;
+	if (rq->srcaddr == p->remotelimit) {
+		// if exceed limit, wake proc
+		net_txrecvrp(p, rq->srcaddr, -1);
+		proc_wake(p, 0);
+		return;
+	}
+
+	if (rq->need & 0x1)
+		net_txrecvrp(p, rq->srcaddr, 0);
+	if (rq->need & 0x2)
+		net_txrecvrp(p, rq->srcaddr, 1);
+	if (rq->need & 0x4)
+		net_txrecvrp(p, rq->srcaddr, 2);
+	return;
+nak:
+	net_txrecvrp(p, 0, -1);
+}
+
+void
+net_txrecvrp(proc *p, intptr_t srcaddr, int8_t part)
+{
+	net_recvrp rp;
+	net_ethsetup(&rp.eth, p->remoteid >> 56);
+	rp.type = NET_RECVRP;
+	rp.srcid = p->mid;
+	rp.dstid = p->remoteid;
+	rp.srcaddr = srcaddr;
+	if (part >= 0 && part < 3) {
+		rp.part = part;
+		pte_t *pte = pmap_walk(p->pml4, srcaddr, 0);
+		intptr_t addr = mem_ptr(PTE_ADDR(*pte));
+		void *ptr = addr + NET_PULLPART * part;
+		int len = partlen[part];
+		assert(len <= NET_PULLPART);
+		net_tx(&rp, sizeof(rp), ptr, len);
+	} else {
+		rp.part = -1;
+		net_tx(&rp, sizeof(rp), NULL, 0);
+	}
+}
+
+void
+net_rxrecvrp(net_recvrp *rp, int len)
+{
+	assert(rp->type == NET_RECVRP);
+	uint8_t srcnode = rq->eth.src[5];
+	assert(srcnode > 0 && srcnode <= NET_MAXNODES && srcnode != net_node);
+	assert(srcnode == (rp->srcid >> 56));
+	assert(dstnode == (rp->dstid >> 56));
+	assert((rp->srcaddr & 0xfff) == 0);
+
+	proc *cp = mid_find(rp->dstid);
+	if (cp == NULL)
+		return;
+	if (cp->state != PROC_RECV || cp->remoteid != rp->srcid)
+		return;
+	if (rp->srcaddr != cp->pullva)
+		return;
+	if (rp->part == -1 && rp->srcaddr == cp->remotelimit) {
+		// if exceed limit, wake proc
+		proc_wake(cp, 0);
+		// remove cp from recvlist
+		spinlock_acquire(&net_lock);
+		proc *p = net_sendlist;
+		proc **pp = &net_sendlist;
+		for ( ; p != NULL; pp = &p->remotenext, p = p->remotenext) {
+			if (p->mid == rp->dstid && p->remoteid == rp->srcid) {
+				*pp = p->remotenext;
+				break;
+			}
+		}
+		spinlock_release(&net_lock);
+	}
+	if (rp->part >= 0 && rp->part < 3)
+		return;
+
+	if (cp->arrived & (1 << rp->part))
+		return;
+	len -= sizeof(*rp);
+	if (len != partlen[rp->part])
+		return;
+	pte_t *pte = pmap_walk(cp->pml4, cp->remoteva);
+	intptr_t addr = mem_ptr(PTE_ADDR(*pte));
+	void *ptr = addr + NET_PULLPART * rp->part;
+	memcpy(ptr, rp->data, len);
+	cp->arrived |= 1 << rp->part;
+	// advance if possible
+	if (cp->arrived == 7) {
+		cp->pullva += PAGESIZE;
+		cp->remoteva += PAGESIZE;
+		cp->arrived = 0;
+		net_txrecvrq(cp);
+	}
 }
 
 #endif // LAB >= 5

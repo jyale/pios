@@ -39,6 +39,8 @@ typedef enum proc_state {
 	PROC_MIGR,		// Migrating to another node
 	PROC_AWAY,		// Migrated to another node
 	PROC_PULL,		// Migrated to another node
+	PROC_SEND,
+	PROC_RECV,
 #endif
 } proc_state;
 
@@ -93,6 +95,12 @@ typedef struct proc {
 	uint64_t mid;
 	label_t		label;
 	label_t		clearance;
+
+	// network remote state
+	struct proc	*remotenext;
+	uint64_t	remoteid;
+	intptr_t	remoteva;
+	intptr_t	remotelimit;
 } proc;
 
 #define proc_cur()	(cpu_cur()->proc)

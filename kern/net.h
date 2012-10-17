@@ -83,6 +83,10 @@ typedef enum net_msgtype {
 	NET_MIGRP,		// Migrate reply
 	NET_PULLRQ,		// Page pull request
 	NET_PULLRP,		// Page pull reply
+	NET_SENDRQ,
+	NET_SENDRP,
+	NET_RECVRQ,
+	NET_RECVRP,
 } net_msgtype;
 
 // Minimal packet header for all our network messages
@@ -94,7 +98,7 @@ typedef struct net_hdr {
 typedef struct net_migrq {
 	net_ethhdr	eth;
 	net_msgtype	type;	// = NET_MIGRQ
-	uint32_t	home;	// Remote ref for proc's home node & physaddr
+	intptr_t	home;	// Remote ref for proc's home node & physaddr
 	intptr_t	pml4;	// Remote ref for proc's page map
 	procstate	save;	// Process's saved user-visible state
 } net_migrq;
@@ -102,7 +106,7 @@ typedef struct net_migrq {
 typedef struct net_migrp {
 	net_ethhdr	eth;
 	net_msgtype	type;	// = NET_MIGRP
-	uint32_t	home;	// Remote ref for proc being acknowledged
+	intptr_t	home;	// Remote ref for proc being acknowledged
 } net_migrp;
 
 // Pull a page from a remote node
@@ -127,6 +131,47 @@ typedef struct net_pullrphdr {
 	char		data[0]; // Variable-length payload follows pullrphdr
 } net_pullrphdr;
 
+typedef struct net_sendrq {
+	net_ethhdr	eth;
+	net_msgtype	type;	// = NET_SENDRQ
+	uint64_t	srcid;
+	uint64_t	dstid;
+	intptr_t	srcaddr;
+	intptr_t	dstaddr;
+	size_t		size;
+	label_t		label;
+	// TODO
+} net_sendrq;
+
+typedef struct net_sendrp {
+	net_ethhdr	eth;
+	net_msgtype	type;	// = NET_SENDRP
+	uint64_t	srcid;
+	uint64_t	dstid;
+	int8_t		status;	// 0 for normal, -1 for abort
+	// TODO
+} net_sendrp;
+
+typedef struct net_recvrq {
+	net_ethhdr	eth;
+	net_msgtype	type;	// = NET_RECVRQ
+	uint64_t	srcid;
+	uint64_t	dstid;
+	intptr_t	srcaddr;
+	uint8_t		need;
+	// TODO
+} net_recvrq;
+
+typedef struct net_recvrp {
+	net_ethhdr	eth;
+	net_msgtype	type;	// = NET_RECVRP
+	uint64_t	srcid;
+	uint64_t	dstid;
+	intptr_t	srcaddr;
+	int8_t		part;
+	char		data[0];
+	// TODO
+} net_recvrp;
 
 // 32-bit remote reference layout.
 // Note that bit 0, corresponding to PTE_P, must always be zero,
@@ -160,7 +205,7 @@ void net_init(void);
 void net_rx(void *ethpkt, int len);
 void net_tick(void);
 void gcc_noreturn net_migrate(struct trapframe *tf, uint8_t node, int entry);
-void gcc_noreturn net_send(struct trapframe *tf, uint64_t msgid, void *src, void *dst, size_t size);
+void gcc_noreturn net_send(struct trapframe *tf, uint64_t msgid, intptr_t srcaddr, intptr_t dstaddr, size_t size);
 
 #endif // !PIOS_KERN_NET_H
 #endif // LAB >= 2

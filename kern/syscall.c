@@ -34,7 +34,6 @@
 static void gcc_noreturn do_ret(trapframe *tf);
 #endif
 
-
 // This bit mask defines the eflags bits user code is allowed to set.
 #define FL_USER		(FL_CF|FL_PF|FL_AF|FL_ZF|FL_SF|FL_DF|FL_OF)
 
@@ -155,7 +154,7 @@ do_put(trapframe *tf, uint32_t cmd)
 {
 	proc *p = proc_cur();
 	assert(p->state == PROC_RUN && p->runcpu == cpu_cur());
-	//cprintf("PUT proc %x rip %p rsp %p cmd %x\n", p, tf->rip, tf->rsp, cmd);
+	cprintf("PUT proc %p rip %p rsp %p cmd %x\n", p, tf->rip, tf->rsp, cmd);
 
 	if (cmd & SYS_REMOTE == 0) {
 #if SOL >= 5
@@ -171,7 +170,9 @@ do_put(trapframe *tf, uint32_t cmd)
 	if (cmd & SYS_REMOTE) {
 		// find receiver process
 		uint8_t node = (tf->rdx >> 56) & 0xff;
-		if (node == net_node) {
+		cprintf("PUT node %x net_node %x\n", node, net_node);
+		if (node == 0 || node == net_node) {
+			tf->rdx &= (1ULL << 56) - 1;
 			cp = mid_find(tf->rdx);
 			if (cp == &proc_null || cp == p) {
 				// no matching process
@@ -179,7 +180,7 @@ do_put(trapframe *tf, uint32_t cmd)
 				goto exit;
 			}
 		} else {
-			cp = &proc_null;
+			cp = proc_net;
 		}
 	}
 
@@ -198,6 +199,7 @@ do_put(trapframe *tf, uint32_t cmd)
 				panic("sys_put: no memory for child");
 		}
 	}
+	cprintf("PUT cp %p(%x)\n", cp, cp->state);
 
 	// WWY: do label pacing
 	tag_t less = label_leq_hi(&p->label, &cp->clearance);
@@ -213,16 +215,14 @@ do_put(trapframe *tf, uint32_t cmd)
 		ts = ROUNDUP(t, label_time(less.time));
 	}
 
-	// WWY: do label checking
-	if (less.level) {
-		// should abort
-		spinlock_release(&p->lock);
-		goto exit;
-	}
-
 	// Synchronize with child if necessary.
 	if (cmd & SYS_REMOTE) {
-		if (cp->state != PROC_BLOCK || ts != 0) {
+		if (cp == proc_net) {
+			if (ts != 0) {
+				cprintf("proc %p send wait for proc_net\n", p);
+				proc_wait(p, proc_net, tf, ts);
+			}
+		} else if (cp->state != PROC_BLOCK || ts != 0) {
 			cprintf("proc %p send wait for proc %p non-blocked\n", p, cp);
 			proc_wait(p, cp, tf, ts);
 		} else if (cp->waitproc != p) {
@@ -236,7 +236,14 @@ do_put(trapframe *tf, uint32_t cmd)
 		}
 	}
 
-	if (cmd & SYS_REMOTE && cp == &proc_null) {
+	// WWY: do label checking
+	if (less.level) {
+		// should abort
+		spinlock_release(&p->lock);
+		goto exit;
+	}
+
+	if ((cmd & SYS_REMOTE) && cp == proc_net) {
 		net_send(tf, tf->rdx, tf->rsi, tf->rdi, tf->rcx);
 	}
 
@@ -328,6 +335,7 @@ do_put(trapframe *tf, uint32_t cmd)
 #endif	// SOL >= 3
 
 exit:
+	cprintf("PUT cmd %x\n", cmd);
 	// Start the child if requested
 	if (cmd & SYS_START)
 		proc_ready(cp);
@@ -340,7 +348,7 @@ do_get(trapframe *tf, uint32_t cmd)
 {
 	proc *p = proc_cur();
 	assert(p->state == PROC_RUN && p->runcpu == cpu_cur());
-	//cprintf("GET proc %x rip %p rsp %p cmd %x\n", p, tf->rip, tf->rsp, cmd);
+	cprintf("GET proc %p rip %p rsp %p cmd %x\n", p, tf->rip, tf->rsp, cmd);
 
 #if SOL >= 5
 	// First migrate if we need to.
@@ -469,20 +477,26 @@ exit:
 static void gcc_noreturn
 do_ret(trapframe *tf)
 {
-	//cprintf("RET proc %x rip %p rsp %p\n", proc_cur(), tf->rip, tf->rsp);
+	//cprintf("RET proc %p rip %p rsp %p\n", proc_cur(), tf->rip, tf->rsp);
 	if (tf->rdx == 0) {
 		// return to parent
 		proc_ret(tf, 1);	// Complete syscall insn and return to parent
 	} else {
 		// block process
+		uint8_t node = (tf->rdx >> 56) & 0xff;
 		proc *cp = proc_cur();
-		proc *p = mid_find(tf->rdx);
-		if (p == &proc_null || p == cp) {
-			// no matching process
-			trap_return(tf);
+		if (node == 0 || node == net_node) {
+			tf->rdx &= (1ULL << 56) - 1;
+			proc *p = mid_find(tf->rdx);
+			if (p == &proc_null || p == cp) {
+				// no matching process
+				trap_return(tf);
+			}
+			cprintf("proc %p recv block for proc %p\n", cp, p);
+			proc_block(p, cp ,tf);
+		} else {
+			net_recv(tf, tf->rdx);
 		}
-		cprintf("proc %p recv block for proc %p\n", cp, p);
-		proc_block(p, cp ,tf);
 	}
 }
 

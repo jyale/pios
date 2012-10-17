@@ -148,7 +148,7 @@ typedef struct net_sendrp {
 	net_msgtype	type;	// = NET_SENDRP
 	uint64_t	srcid;
 	uint64_t	dstid;
-	int8_t		status;	// 0 for normal, -1 for abort
+	int8_t		status;	// 1 for ready, 0 for not ready, -1 for abort
 	// TODO
 } net_sendrp;
 
@@ -169,6 +169,7 @@ typedef struct net_recvrp {
 	uint64_t	dstid;
 	intptr_t	srcaddr;
 	int8_t		part;
+	uint8_t		padding[7];
 	char		data[0];
 	// TODO
 } net_recvrp;
@@ -198,7 +199,6 @@ typedef struct net_recvrp {
 extern uint8_t net_node;	// My node number - from net_mac[5]
 extern uint8_t net_mac[6];	// My MAC address from the Ethernet card
 
-
 struct trapframe;
 
 void net_init(void);
@@ -206,6 +206,7 @@ void net_rx(void *ethpkt, int len);
 void net_tick(void);
 void gcc_noreturn net_migrate(struct trapframe *tf, uint8_t node, int entry);
 void gcc_noreturn net_send(struct trapframe *tf, uint64_t msgid, intptr_t srcaddr, intptr_t dstaddr, size_t size);
+void gcc_noreturn net_recv(struct trapframe *tf, uint64_t msgid);
 
 #endif // !PIOS_KERN_NET_H
 #endif // LAB >= 2

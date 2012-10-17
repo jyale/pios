@@ -1,6 +1,7 @@
 #include <inc/syscall.h>
 #include <inc/stdio.h>
 #include <inc/unistd.h>
+#include <inc/string.h>
 #include <inc/vm.h>
 #include <inc/label.h>
 #include <inc/args.h>
@@ -211,7 +212,7 @@ void basictest ()
 	sys_send(LBL_CHILD, tmp, tmp, 4096);
 	sys_recv(LBL_CHILD);
 }
-
+#if 0
 void forktest ()
 {
 	int pid = fork();
@@ -265,7 +266,7 @@ void forktest ()
 		wait(NULL);
 	}
 }
-#if 0
+
 void delaytest ()
 {
 	int pid = fork();
@@ -300,24 +301,26 @@ void delaytest ()
 		wait(NULL);
 	}
 }
-
-void nettest ()
+#endif
+void nettest (char cmd)
 {
+	sys_get(SYS_PERM | SYS_RW, 0, NULL, NULL, (void *)VM_SCRATCHLO, 4096);
 	int flag = sys_mid_register(LBL);
-	char str[] = "1234567890";
-	char tmp[] = "----------";
+	char *tmp = (void *)VM_SCRATCHLO;
 	size_t len;
-	uint16_t node = sys_msg_node();
-	cprintf("node %u\n", node);
-	if (node == 1) {
-		len = sys_msg_send_remote(str, 5, LBL, 2);
-		cprintf("send len %llu (should send somthing)\n", len);
+	if (cmd == 's') {
+		memmove(tmp, "123456789", 10);
+		cprintf("before send\n");
+		sys_send(2ULL << 56 | LBL, tmp, tmp, 4096);
+		cprintf("send len (should send somthing)\n");
 	} else {
-		len = sys_msg_recv_remote(tmp, 10, LBL, 1);
-		cprintf("recv len %llu %s (should recv something)\n", len, tmp);
+		memmove(tmp, "---------", 4096);
+		cprintf("before recv\n");
+		sys_recv(1ULL << 56 | LBL);
+		cprintf("recv len %s (should recv something)\n", tmp);
 	}
 }
-
+#if 0
 void interactivetest ()
 {
 	int flag = sys_mid_register(LBL);
@@ -436,16 +439,18 @@ int main (int argc, char **argv)
 			case 'b':
 				basictest();
 				break;
+#if 0
 			case 'f':
 				forktest();
 				break;
-#if 0
 			case 'd':
 				delaytest();
 				break;
+#endif
 			case 'n':
-				nettest();
+				nettest(argv[0][1]);
 				break;
+#if 0
 			case 'i':
 				interactivetest();
 				break;

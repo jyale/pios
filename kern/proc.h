@@ -109,6 +109,9 @@ typedef struct proc {
 // Special "null process" - always just contains zero in all fields.
 extern proc proc_null;
 
+// Special "net process" - for net driver
+extern proc *proc_net;
+
 // Special root process - the only one that can do direct external I/O.
 extern proc *proc_root;
 

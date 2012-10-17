@@ -15,8 +15,10 @@
 #include <kern/trap.h>
 #include <kern/proc.h>
 #include <kern/net.h>
+#include <kern/label.h>
 
 #include <dev/e100.h>
+#include <dev/timer.h>
 
 
 uint8_t net_node;	// My node number - from net_mac[5]
@@ -44,6 +46,17 @@ void net_rxpullrq(net_pullrq *rq);
 void net_txpullrp(uint8_t rqnode, uint32_t rr, int pglev, int part, void *pg);
 void net_rxpullrp(net_pullrphdr *rp, int len);
 bool net_pullpte(proc *p, uint32_t *pte, int pglevel);
+
+void net_txsendrq(proc *p, intptr_t dstaddr);
+void net_rxsendrq(net_sendrq *rq);
+void net_txsendrp(uint64_t srcid, uint64_t dstid, int8_t status);
+void net_rxsendrp(net_sendrp *rp);
+
+void net_recv(proc *cp, uint64_t srcid, uint64_t dstid, intptr_t srcaddr, intptr_t dstaddr, size_t size);
+void net_txrecvrq(proc *cp);
+void net_rxrecvrq(net_recvrq *rq);
+void net_txrecvrp(proc *p, intptr_t srcaddr, int8_t part);
+void net_rxrecvrp(net_recvrp *rp, int len);
 
 void
 net_init(void)
@@ -744,7 +757,7 @@ net_send(struct trapframe *tf, uint64_t msgid, intptr_t srcaddr, intptr_t dstadd
 	p->remotelimit = srcaddr + size;
 	net_sendlist = p;
 
-	net_txsendrq(p);
+	net_txsendrq(p, dstaddr);
 
 	spinlock_release(&net_lock);
 	proc_sched();
@@ -763,7 +776,7 @@ net_txsendrq(proc *p, intptr_t dstaddr)
 	rq.srcid = p->mid;
 	rq.dstid = p->remoteid;
 	rq.srcaddr = p->remoteva;
-	rq.dstaddr = dst;
+	rq.dstaddr = dstaddr;
 	rq.size = p->remotelimit - p->remoteid;
 	memcpy(&rq.label, &p->label, sizeof(label_t));
 	net_tx(&rq, sizeof(rq), NULL, 0);
@@ -806,15 +819,14 @@ net_rxsendrq(net_sendrq *rq)
 		goto wait_save;
 	} else {
 		// check msgid cp waits for
-		waitid = 0;
-		if (waitid != rq->srcid) {
+		if (cp->remoteid != rq->srcid) {
 			// wait & save
 			goto wait_save;
 		}
 	}
 
 	// start recv
-	net_recv()
+	net_recv(cp, rq->srcid, rq->dstid, rq->srcaddr, rq->dstaddr, rq->size);
 wait_save:
 	// wait & save
 	spinlock_acquire(&net_lock);
@@ -901,8 +913,8 @@ net_rxrecvrq(net_recvrq *rq)
 	assert(rq->type == NET_RECVRQ);
 	uint8_t dstnode = rq->eth.src[5];
 	assert(dstnode > 0 && dstnode <= NET_MAXNODES && dstnode != net_node);
-	assert(dstnode == (rp->dstid >> 56));
-	assert(dstnode != (rp->srcid >> 56));
+	assert(dstnode == (rq->dstid >> 56));
+	assert(dstnode != (rq->srcid >> 56));
 	assert((rq->srcaddr & 0xfff) == 0);
 
 	proc *p = mid_find(rq->srcid);
@@ -957,10 +969,9 @@ void
 net_rxrecvrp(net_recvrp *rp, int len)
 {
 	assert(rp->type == NET_RECVRP);
-	uint8_t srcnode = rq->eth.src[5];
+	uint8_t srcnode = rp->eth.src[5];
 	assert(srcnode > 0 && srcnode <= NET_MAXNODES && srcnode != net_node);
 	assert(srcnode == (rp->srcid >> 56));
-	assert(dstnode == (rp->dstid >> 56));
 	assert((rp->srcaddr & 0xfff) == 0);
 
 	proc *cp = mid_find(rp->dstid);
@@ -993,7 +1004,7 @@ net_rxrecvrp(net_recvrp *rp, int len)
 	len -= sizeof(*rp);
 	if (len != partlen[rp->part])
 		return;
-	pte_t *pte = pmap_walk(cp->pml4, cp->remoteva);
+	pte_t *pte = pmap_walk(cp->pml4, cp->remoteva, 1);
 	intptr_t addr = mem_ptr(PTE_ADDR(*pte));
 	void *ptr = addr + NET_PULLPART * rp->part;
 	memcpy(ptr, rp->data, len);

@@ -170,11 +170,16 @@ do_put(trapframe *tf, uint32_t cmd)
 	proc *cp = NULL;
 	if (cmd & SYS_REMOTE) {
 		// find receiver process
-		cp = mid_find(tf->rdx);
-		if (cp == &proc_null || cp == p) {
-			// no matching process
-			cmd = 0;
-			goto exit;
+		uint8_t node = (tf->rdx >> 56) & 0xff;
+		if (node == net_node) {
+			cp = mid_find(tf->rdx);
+			if (cp == &proc_null || cp == p) {
+				// no matching process
+				cmd = 0;
+				goto exit;
+			}
+		} else {
+			cp = &proc_null;
 		}
 	}
 
@@ -208,6 +213,13 @@ do_put(trapframe *tf, uint32_t cmd)
 		ts = ROUNDUP(t, label_time(less.time));
 	}
 
+	// WWY: do label checking
+	if (less.level) {
+		// should abort
+		spinlock_release(&p->lock);
+		goto exit;
+	}
+
 	// Synchronize with child if necessary.
 	if (cmd & SYS_REMOTE) {
 		if (cp->state != PROC_BLOCK || ts != 0) {
@@ -224,11 +236,8 @@ do_put(trapframe *tf, uint32_t cmd)
 		}
 	}
 
-	// WWY: do label checking
-	if (less.level) {
-		// should abort
-		spinlock_release(&p->lock);
-		goto exit;
+	if (cmd & SYS_REMOTE && cp == &proc_null) {
+		net_send(tf, tf->rdx, tf->rsi, tf->rdi, tf->rcx);
 	}
 
 	// Since the child is now stopped, it's ours to control;

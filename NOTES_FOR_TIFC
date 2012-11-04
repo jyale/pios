@@ -1,0 +1,76 @@
+==== Local Message Passing ====
+
+     sys_send                              sys_recv
+
+     PROC_RUN                              PROC_RUN
+      |     |                                 |
+ fast |     | if dst != PROC_BLOCK            |
+ path |     | or need wait due to   <==<==<== |
+      |     | TIFC label checking     notify  |
+      |     V                                 V
+      |   PROC_WAIT                       PROC_BLOCK
+      |     |                                 |
+      +->+<-+ dst == PROC_BLOCK               |
+         |    and aleady paced                |
+         |                                    |
+         |  ==>==>==>==>==>==>==>==>==>==>==> |
+         |             copy data              |
+         V                                    V
+     PROC_READY                           PROC_READY
+
+
+==== Remote Message Passing ====
+
+       sys_send                                sys_recv
+
+       PROC_RUN                                :     :
+           |                                   :     :
+           V                                   :     :
+       PROC_WAIT                           PROC_RUN  :
+           |                                   |     :
+    pacing +                                   V     :
+           |                              PROC_BLOCK :
+           |                                   |     :
+   enqueue + ==>==>==>==>==>==>==>==>==>==>==> +     -
+ send_list |  send_rq (srcid dstid)            |     : save
+           |                                   |     : srcid->dstid
+           + <==<==<==<==<==<==<==<==<==<==<== +     -
+   dequeue +             send_rp (srcid dstid) |  PROC_RUN
+ send_list |                                   |     |
+           |                                   |     V
+           |                                   | PROC_BLOCK
+           |                                   |     |
+    fails  |                                   |     | match saved
+    label  |                                   +->+<-+ srcid->dstid
+ checking  |                                      |
+ +---------+ <==<==<==<==<==<==<==<==<==<==<==<== +
+ |         |      recv_rq (srcid dstid clearance) |
+ |         V                                      |       fails
+ |     PROC_SEND                                  |       label
+ |         |                                      |       checking
+ |         + ==>==>==>==>==>==>==>==>==>==>==>==> +-----------+
+ |         | recv_rp (srcid dstid label           |           |
+ |         |          srcaddr dstaddr size)       V           |
+ |         |                                  PROC_RECV       |
+ |         |                                      |           |
+ |         + <==<==<==<==<==<==<==<==<==<==<==<== + enqueue   |
+ |         |               fetch_rq (srcid dstid  | recv_list |
+ |         |                        srcaddr need) |           |
+ |         |                                      |           |
+ |         + ==>==>==>==>==>==>==>==>==>==>==>==> +           |
+ |         | fetch_rp (srcid dstid srcaddr        + copy data |
+ |         |           part data)                 |           |
+ |         :                                      :           |
+ |         :     (REPEAT FETCH UNTIL FINISH)      :           |
+ |         :                                      :           |
+ |         +                                      + dequeue   |
+ |         |                                      | recv_list |
+ |         |                                      |           |
+ +-------->+                                      +<----------+
+           |                                      |
+           V                                      V
+       PROC_READY                             PROC_READY
+
+TODO: I should do extra pacing after receiving dst's clearance.
+      Or I should move pacing to that time spot.
+      Or I should do pacing at the end of dst.

@@ -87,6 +87,8 @@ typedef enum net_msgtype {
 	NET_SENDRP,
 	NET_RECVRQ,
 	NET_RECVRP,
+	NET_FETCHRQ,
+	NET_FETCHRP,
 } net_msgtype;
 
 // Minimal packet header for all our network messages
@@ -136,11 +138,6 @@ typedef struct net_sendrq {
 	net_msgtype	type;	// = NET_SENDRQ
 	uint64_t	srcid;
 	uint64_t	dstid;
-	intptr_t	srcaddr;
-	intptr_t	dstaddr;
-	size_t		size;
-	label_t		label;
-	// TODO
 } net_sendrq;
 
 typedef struct net_sendrp {
@@ -148,8 +145,6 @@ typedef struct net_sendrp {
 	net_msgtype	type;	// = NET_SENDRP
 	uint64_t	srcid;
 	uint64_t	dstid;
-	int8_t		status;	// 1 for ready, 0 for not ready, -1 for abort
-	// TODO
 } net_sendrp;
 
 typedef struct net_recvrq {
@@ -157,8 +152,7 @@ typedef struct net_recvrq {
 	net_msgtype	type;	// = NET_RECVRQ
 	uint64_t	srcid;
 	uint64_t	dstid;
-	intptr_t	srcaddr;
-	uint8_t		need;
+	label_t		clearance;
 	// TODO
 } net_recvrq;
 
@@ -168,11 +162,33 @@ typedef struct net_recvrp {
 	uint64_t	srcid;
 	uint64_t	dstid;
 	intptr_t	srcaddr;
+	intptr_t	dstaddr;
+	size_t		size;
+	label_t		label;
+	// TODO
+} net_recvrp;
+
+typedef struct net_fetchrq {
+	net_ethhdr	eth;
+	net_msgtype	type;	// = NET_FETCHRQ
+	uint64_t	srcid;
+	uint64_t	dstid;
+	intptr_t	srcaddr;
+	uint8_t		need;
+	// TODO
+} net_fetchrq;
+
+typedef struct net_fetchrp {
+	net_ethhdr	eth;
+	net_msgtype	type;	// = NET_FETCHRP
+	uint64_t	srcid;
+	uint64_t	dstid;
+	intptr_t	srcaddr;
 	int8_t		part;
 	uint8_t		padding[7];
 	char		data[0];
 	// TODO
-} net_recvrp;
+} net_fetchrp;
 
 // 32-bit remote reference layout.
 // Note that bit 0, corresponding to PTE_P, must always be zero,

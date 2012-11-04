@@ -418,7 +418,8 @@ void usage ()
 	cprintf("\tb: basictest\n");
 	cprintf("\tf: forktest\n");
 	cprintf("\td: delaytest\n");
-	cprintf("\tn: nettest\n");
+	cprintf("\tns: nettest - send (only for 1)\n");
+	cprintf("\tnr: nettest - recv (only for 2)\n");
 	cprintf("\ti: interactivetest\n");
 }
 

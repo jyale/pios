@@ -49,16 +49,20 @@ void net_txpullrp(uint8_t rqnode, uint32_t rr, int pglev, int part, void *pg);
 void net_rxpullrp(net_pullrphdr *rp, int len);
 bool net_pullpte(proc *p, uint32_t *pte, int pglevel);
 
-void net_txsendrq(proc *p, intptr_t dstaddr);
+void net_txsendrq(proc *p);
 void net_rxsendrq(net_sendrq *rq);
-void net_txsendrp(uint64_t srcid, uint64_t dstid, int8_t status);
+void net_txsendrp(uint64_t srcid, uint64_t dstid);
 void net_rxsendrp(net_sendrp *rp);
 
-void net_recvmem(proc *cp, uint64_t srcid, uint64_t dstid, intptr_t srcaddr, intptr_t dstaddr, size_t size);
 void net_txrecvrq(proc *cp);
 void net_rxrecvrq(net_recvrq *rq);
-void net_txrecvrp(proc *p, intptr_t srcaddr, int8_t part);
-void net_rxrecvrp(net_recvrp *rp, int len);
+void net_txrecvrp(proc *p);
+void net_rxrecvrp(net_recvrp *rp);
+
+void net_txfetchrq(proc *cp);
+void net_rxfetchrq(net_fetchrq *rq);
+void net_txfetchrp(proc *p, intptr_t srcaddr, int8_t part);
+void net_rxfetchrp(net_fetchrp *rp, int len);
 
 void
 net_init(void)
@@ -106,7 +110,7 @@ net_ethsetup(net_ethhdr *eth, uint8_t destnode)
 // To transmit from just one buffer, set blen to zero.
 int net_tx(void *hdr, int hlen, void *body, int blen)
 {
-	//cprintf("net_tx %d+%d\n", hlen, blen);
+	cprintf("net_tx %x+%x\n", hlen, blen);
 	return e100_tx(hdr, hlen, body, blen);
 }
 
@@ -115,7 +119,7 @@ int net_tx(void *hdr, int hlen, void *body, int blen)
 void
 net_rx(void *pkt, int len)
 {
-	//cprintf("net_rx len %d\n", len);
+	cprintf("net_rx len %x\n", len);
 	if (len < sizeof(net_hdr)) {
 		warn("net_rx: runt packet (%d bytes)", len);
 		return;	// drop
@@ -167,31 +171,45 @@ net_rx(void *pkt, int len)
 		break;
 	case NET_SENDRQ:
 		if (len < sizeof(net_sendrq)) {
-			warn("net_rx: runt pull reply (%d bytes)", len);
+			warn("net_rx: runt send request (%d bytes)", len);
 			return;	// drop
 		}
 		net_rxsendrq(pkt);
 		break;
 	case NET_SENDRP:
 		if (len < sizeof(net_sendrp)) {
-			warn("net_rx: runt pull reply (%d bytes)", len);
+			warn("net_rx: runt send reply (%d bytes)", len);
 			return;	// drop
 		}
 		net_rxsendrp(pkt);
 		break;
 	case NET_RECVRQ:
 		if (len < sizeof(net_recvrq)) {
-			warn("net_rx: runt pull reply (%d bytes)", len);
+			warn("net_rx: runt recv request (%d bytes)", len);
 			return;	// drop
 		}
 		net_rxrecvrq(pkt);
 		break;
 	case NET_RECVRP:
 		if (len < sizeof(net_recvrp)) {
-			warn("net_rx: runt pull reply (%d bytes)", len);
+			warn("net_rx: runt recv reply (%d bytes)", len);
 			return;	// drop
 		}
-		net_rxrecvrp(pkt, len);
+		net_rxrecvrp(pkt);
+		break;
+	case NET_FETCHRQ:
+		if (len < sizeof(net_fetchrq)) {
+			warn("net_rx: runt fetch request (%d bytes)", len);
+			return;	// drop
+		}
+		net_rxfetchrq(pkt);
+		break;
+	case NET_FETCHRP:
+		if (len < sizeof(net_fetchrp)) {
+			warn("net_rx: runt fetch reply (%d bytes)", len);
+			return;	// drop
+		}
+		net_rxfetchrp(pkt, len);
 		break;
 	default:
 		warn("net_rx: unrecognized message type %x", h->type);
@@ -790,92 +808,66 @@ net_send(struct trapframe *tf, uint64_t msgid, intptr_t srcaddr, intptr_t dstadd
 	assert(p->state == PROC_RUN);
 	p->state = PROC_WAIT;
 	p->waitproc = proc_net;
+	p->remoteid = msgid;
+	p->remoteva = srcaddr;
+	p->remotelimit = srcaddr + size;
+	p->pullva = dstaddr;
+
+	net_txsendrq(p);
+
 	spinlock_release(&p->lock);
 	spinlock_acquire(&net_lock);
 	assert(p->remotenext == NULL);
-	p->remoteid = msgid;
 	p->remotenext = net_sendlist;
-	p->remoteva = srcaddr;
-	p->remotelimit = srcaddr + size;
 	net_sendlist = p;
-
-	net_txsendrq(p, dstaddr);
-
 	spinlock_release(&net_lock);
 	proc_sched();
 }
 
 void
-net_txsendrq(proc *p, intptr_t dstaddr)
+net_txsendrq(proc *p)
 {
-	cprintf("[net_txsendrq] p %p dstaddr %p\n", p, dstaddr);
+	cprintf("[net_txsendrq] p %p\n", p);
 	assert(p->state == PROC_WAIT);
 	assert(p->waitproc == proc_net);
-	assert(spinlock_holding(&net_lock));
+	assert(spinlock_holding(&p->lock));
 
 	net_sendrq rq;
 	net_ethsetup(&rq.eth, p->remoteid >> 56);
 	rq.type = NET_SENDRQ;
 	rq.srcid = ((uint64_t)net_node << 56) | p->mid;
 	rq.dstid = p->remoteid;
-	rq.srcaddr = p->remoteva;
-	rq.dstaddr = dstaddr;
-	rq.size = p->remotelimit - p->remoteva;
-	memcpy(&rq.label, &p->label, sizeof(label_t));
 	net_tx(&rq, sizeof(rq), NULL, 0);
 }
 
 void
 net_rxsendrq(net_sendrq *rq)
 {
-	cprintf("[net_rxsendrq] srcid %p dstid %p srcaddr %p dstaddr %p size %p\n", rq->srcid, rq->dstid, rq->srcaddr, rq->dstaddr, rq->size);
+	cprintf("[net_rxsendrq] srcid %p dstid %p\n", rq->srcid, rq->dstid);
 	uint8_t srcnode = rq->eth.src[5];
 	assert(srcnode > 0 && srcnode <= NET_MAXNODES && srcnode != net_node);
-	assert(srcnode == (rq->srcid >> 56));
-	assert(srcnode != (rq->dstid >> 56));
+	if (srcnode != (rq->srcid >> 56)) return;
+	if (net_node != (rq->dstid >> 56)) return;
 
-	int ack = 1;
-	// find proc
+	net_txsendrp(rq->srcid, rq->dstid);
+
 	uint64_t dstid = rq->dstid & ((1ULL << 56) - 1);
 	proc *cp = mid_find(dstid);
 	if (cp == NULL)
 		goto wait_save;
-	tag_t less = label_leq_hi(&rq->label, &cp->clearance);
-	cprintf("rq label ");
-	label_print(&rq->label);
-	cprintf("cp %p clearance ", cp);
-	label_print(&cp->clearance);
-	cprintf("level %x time %x\n", less.level, less.time);
-	if (less.level) {
-		net_txsendrp(rq->srcid, rq->dstid, -1);
-		return;
-	}
-	uint64_t ts = 0;
-	if (less.time) {
-		// wait until paced
-		uint64_t t = timer_read();
-		t = t * 1000000000 / TIMER_FREQ;	// convert to nanoseconds
-		ts = ROUNDUP(t, label_time(less.time));
-	}
-
-	if (cp->state != PROC_BLOCK || ts != 0) {
-		// wait & save
+	spinlock_acquire(&cp->lock);
+	if (cp->state != PROC_BLOCK) {
 		goto wait_save;
-	} else {
-		// check msgid cp waits for
-		if (cp->remoteid != rq->srcid) {
-			// wait & save
-			goto wait_save;
-		}
 	}
-
-	net_txsendrp(rq->srcid, rq->dstid, 1);
-	// start recv
-	net_recvmem(cp, rq->srcid, rq->dstid, rq->srcaddr, rq->dstaddr, rq->size);
+	if (cp->remoteid != rq->srcid) {
+		goto wait_save;
+	}
+	net_txrecvrq(cp);
+	spinlock_release(&cp->lock);
 	return;
+
 wait_save:
-	// wait & save
-	net_txsendrp(rq->srcid, rq->dstid, 0);
+	spinlock_release(&cp->lock);
 
 	spinlock_acquire(&net_lock);
 	table_insert(net_waitmap, rq->srcid, rq->dstid);
@@ -883,26 +875,25 @@ wait_save:
 }
 
 void
-net_txsendrp(uint64_t srcid, uint64_t dstid, int8_t status)
+net_txsendrp(uint64_t srcid, uint64_t dstid)
 {
-	cprintf("[net_txsendrp] srcid %p dstid %p status %x\n", srcid, dstid, status);
+	cprintf("[net_txsendrp] srcid %p dstid %p\n", srcid, dstid);
 	net_sendrp rp;
 	net_ethsetup(&rp.eth, srcid >> 56);
 	rp.type = NET_SENDRP;
 	rp.srcid = srcid;
 	rp.dstid = dstid;
-	rp.status = status;
 	net_tx(&rp, sizeof(rp), NULL, 0);
 }
 
 void
 net_rxsendrp(net_sendrp *rp)
 {
-	cprintf("[net_rxsendrp] srcid %p dstid %p status %x\n", rp->srcid, rp->dstid, rp->status);
+	cprintf("[net_rxsendrp] srcid %p dstid %p\n", rp->srcid, rp->dstid);
 	uint8_t dstnode = rp->eth.src[5];
 	assert(dstnode > 0 && dstnode <= NET_MAXNODES && dstnode != net_node);
-	assert(dstnode == (rp->dstid >> 56));
-	assert(dstnode != (rp->srcid >> 56));
+	if (dstnode != (rp->dstid >> 56)) return;
+	if (net_node != (rp->srcid >> 56)) return;
 
 	// remove p from sendlist
 	uint64_t srcid = rp->srcid & ((1ULL << 56) - 1);
@@ -916,9 +907,6 @@ net_rxsendrp(net_sendrp *rp)
 		}
 	}
 	spinlock_release(&net_lock);
-	// change state to PROC_SEND
-	cprintf("[net_rxsendrp] p %p p->state %x\n", p, p->state);
-	p->state = PROC_SEND;
 }
 
 void gcc_noreturn
@@ -927,16 +915,16 @@ net_recv(struct trapframe *tf, uint64_t msgid)
 	proc *cp = proc_cur();
 	proc_save(cp, tf, 1);
 	assert(cp->state == PROC_RUN && cp->runcpu == cpu_cur());
-	cprintf("cp %p label ", cp);
+	cprintf("[net_recv] cp %p label ", cp);
 	label_print(&cp->label);
-	cprintf("cp clearance ");
+	cprintf("[net_recv] cp clearance ");
 	label_print(&cp->clearance);
 
 	spinlock_acquire(&cp->lock);
 	cp->state = PROC_BLOCK;
 	cp->runcpu = NULL;
 	cp->waitproc = proc_net;
-	spinlock_release(&cp->lock);
+
 	spinlock_acquire(&net_lock);
 	assert(cp->remotenext == NULL);
 	cp->remoteid = msgid;
@@ -945,49 +933,160 @@ net_recv(struct trapframe *tf, uint64_t msgid)
 
 	uint64_t dstid;
 	table_find(net_waitmap, msgid, &dstid);
+	dstid &= ((1ULL << 56) - 1);
+	cprintf("[net_recv] dstid %p mid %p\n", dstid, cp->mid);
 	if (dstid == cp->mid) {
 		table_insert(net_waitmap, msgid, 0);
+		spinlock_release(&net_lock);
 		// recv
+		net_txrecvrq(cp);
+	} else {
+		spinlock_release(&net_lock);
 	}
 
-	spinlock_release(&net_lock);
+	spinlock_release(&cp->lock);
 	proc_sched();
-}
-
-void
-net_recvmem(proc *cp, uint64_t srcid, uint64_t dstid, intptr_t srcaddr, intptr_t dstaddr, size_t size)
-{
-	cprintf("[net_recvmem] cp %p srcid %p dstid %p srcaddr %p dstaddr %p size %p\n", cp, srcid, dstid, srcaddr, dstaddr, size);
-	assert(cp->state == PROC_BLOCK);
-	assert(cp->waitproc == proc_net);
-	assert(cp->mid == (dstid & ((1ULL << 56) - 1)));
-
-	spinlock_acquire(&net_lock);
-	assert(cp->remotenext == NULL);
-	cp->remotenext = net_recvlist;
-	net_recvlist = cp;
-	cp->state = PROC_RECV;
-	cp->remoteid = srcid;
-	cp->remoteva = dstaddr;
-	cp->remotelimit = dstaddr + size;
-	cp->pullva = srcaddr;
-	cp->arrived = 0;
-
-	net_txrecvrq(cp);
-
-	spinlock_release(&net_lock);
 }
 
 void
 net_txrecvrq(proc *cp)
 {
 	cprintf("[net_txrecvrq] cp %p\n", cp);
-	assert(cp->state == PROC_RECV);
-	assert(spinlock_holding(&net_lock));
+	assert(cp->state == PROC_BLOCK);
+	assert(cp->waitproc == proc_net);
+	assert(spinlock_holding(&cp->lock));
 
 	net_recvrq rq;
 	net_ethsetup(&rq.eth, cp->remoteid >> 56);
 	rq.type = NET_RECVRQ;
+	rq.dstid = ((uint64_t)net_node << 56) | cp->mid;
+	rq.srcid = cp->remoteid;
+	memmove(&rq.clearance, &cp->clearance, sizeof(label_t));
+	net_tx(&rq, sizeof(rq), NULL, 0);
+}
+
+void
+net_rxrecvrq(net_recvrq *rq)
+{
+	cprintf("[net_rxrecvrq] srcid %p dstid %p\n", rq->srcid, rq->dstid);
+	uint8_t dstnode = rq->eth.src[5];
+	assert(dstnode > 0 && dstnode <= NET_MAXNODES && dstnode != net_node);
+	if (dstnode != (rq->dstid >> 56)) return;
+	if (net_node != (rq->srcid >> 56)) return;
+
+	uint64_t srcid = rq->srcid & ((1ULL << 56) - 1);
+	proc *p = mid_find(srcid);
+	cprintf("[net_rxrecvrq] p %p p->state %x\n", p, p->state);
+	if (p->state != PROC_WAIT)
+		return;
+
+	tag_t less = label_leq_hi(&p->label, &rq->clearance);
+	cprintf("p %p label ", p);
+	label_print(&p->label);
+	cprintf("rq clearance ");
+	label_print(&rq->clearance);
+	cprintf("level %x time %x\n", less.level, less.time);
+
+	spinlock_acquire(&p->lock);
+	if (less.level) {
+		// should not send
+		p->remoteva = 0;
+		p->remotelimit = 0;
+		p->pullva = 0;
+	}
+	net_txrecvrp(p);
+
+	p->state = PROC_SEND;
+	spinlock_release(&p->lock);
+
+	if (less.level) {
+		proc_ready(p);
+	}
+}
+
+void
+net_txrecvrp(proc *p)
+{
+	cprintf("[net_txrecvrp] p %p\n", p);
+	assert(p->state == PROC_WAIT);
+	assert(p->waitproc == proc_net);
+	assert(spinlock_holding(&p->lock));
+
+	net_recvrp rp;
+	net_ethsetup(&rp.eth, p->remoteid >> 56);
+	rp.type = NET_RECVRP;
+	rp.srcid = ((uint64_t)net_node << 56) | p->mid;
+	rp.dstid = p->remoteid;
+	rp.srcaddr = p->remoteva;
+	rp.dstaddr = p->pullva;
+	rp.size = p->remotelimit - p->remoteva;
+	memcpy(&rp.label, &p->label, sizeof(label_t));
+	net_tx(&rp, sizeof(rp), NULL, 0);
+}
+
+void
+net_rxrecvrp(net_recvrp *rp)
+{
+	cprintf("[net_rxrecvrp] srcid %p dstid %p srcaddr %p dstaddr %p size %p\n", rp->srcid, rp->dstid, rp->srcaddr, rp->dstaddr, rp->size);
+	uint8_t srcnode = rp->eth.src[5];
+	assert(srcnode > 0 && srcnode <= NET_MAXNODES && srcnode != net_node);
+	if (srcnode != (rp->srcid >> 56)) return;
+	if (net_node != (rp->dstid >> 56)) return;
+	if (rp->srcaddr & 0xfff) return;
+	if (rp->dstaddr & 0xfff) return;
+	if (rp->size & 0xfff) return;
+
+	// find proc
+	uint64_t dstid = rp->dstid & ((1ULL << 56) - 1);
+	proc *cp = mid_find(dstid);
+	if (cp == NULL)
+		return;
+	spinlock_acquire(&cp->lock);
+	if (cp->state != PROC_BLOCK)
+		goto exit;
+	if (rp->size == 0)
+		goto exit;
+	tag_t less = label_leq_hi(&rp->label, &cp->clearance);
+	cprintf("rp label ");
+	label_print(&rp->label);
+	cprintf("cp %p clearance ", cp);
+	label_print(&cp->clearance);
+	cprintf("level %x time %x\n", less.level, less.time);
+	if (less.level)
+		goto exit;
+
+	cp->state = PROC_RECV;
+	cp->remoteid = rp->srcid;
+	cp->remoteva = rp->dstaddr;
+	cp->remotelimit = rp->dstaddr + rp->size;
+	cp->pullva = rp->srcaddr;
+	cp->arrived = 0;
+
+	net_txfetchrq(cp);
+
+	spinlock_release(&cp->lock);
+
+	spinlock_acquire(&net_lock);
+	assert(cp->remotenext == NULL);
+	cp->remotenext = net_recvlist;
+	net_recvlist = cp;
+	spinlock_release(&net_lock);
+	return;
+exit:
+	spinlock_release(&cp->lock);
+	proc_ready(cp);
+}
+
+void
+net_txfetchrq(proc *cp)
+{
+	cprintf("[net_txfetchrq] cp %p\n", cp);
+	assert(cp->state == PROC_RECV);
+	assert(spinlock_holding(&cp->lock));
+
+	net_fetchrq rq;
+	net_ethsetup(&rq.eth, cp->remoteid >> 56);
+	rq.type = NET_FETCHRQ;
 	rq.srcid = cp->remoteid;
 	rq.dstid = ((uint64_t)net_node << 56) | cp->mid;
 	rq.srcaddr = cp->pullva;
@@ -996,20 +1095,21 @@ net_txrecvrq(proc *cp)
 }
 
 void
-net_rxrecvrq(net_recvrq *rq)
+net_rxfetchrq(net_fetchrq *rq)
 {
-	cprintf("[net_rxrecvrq] srcid %p dstid %p srcaddr %p need %x\n", rq->srcid, rq->dstid, rq->srcaddr, rq->need);
-	assert(rq->type == NET_RECVRQ);
+	cprintf("[net_rxfetchrq] srcid %p dstid %p srcaddr %p need %x\n", rq->srcid, rq->dstid, rq->srcaddr, rq->need);
+	assert(rq->type == NET_FETCHRQ);
 	uint8_t dstnode = rq->eth.src[5];
 	assert(dstnode > 0 && dstnode <= NET_MAXNODES && dstnode != net_node);
-	assert(dstnode == (rq->dstid >> 56));
-	assert(dstnode != (rq->srcid >> 56));
-	assert((rq->srcaddr & 0xfff) == 0);
+	if (dstnode != (rq->dstid >> 56)) return;
+	if (net_node != (rq->srcid >> 56)) return;
+	if (rq->srcaddr & 0xfff) return;
 
 	uint64_t srcid = rq->srcid & ((1ULL << 56) - 1);
 	proc *p = mid_find(srcid);
 	if (p == NULL)
 		goto nak;
+	spinlock_acquire(&p->lock);
 	cprintf("[net_rxrecvrq] p %p\n", p);
 	cprintf("[net_rxrecvrq] state %x\n", p->state);
 	if (p->state != PROC_SEND || p->remoteid != rq->dstid)
@@ -1019,37 +1119,41 @@ net_rxrecvrq(net_recvrq *rq)
 	if (rq->srcaddr == p->remotelimit) {
 		// if exceed limit, wake proc
 		cprintf("[net_rxrecvrq] wake\n");
-		net_txrecvrp(p, rq->srcaddr, -1);
+		net_txfetchrp(p, rq->srcaddr, -1);
+		spinlock_release(&p->lock);
 		proc_ready(p);
 		return;
 	}
 
 	if (rq->need & 0x1)
-		net_txrecvrp(p, rq->srcaddr, 0);
+		net_txfetchrp(p, rq->srcaddr, 0);
 	if (rq->need & 0x2)
-		net_txrecvrp(p, rq->srcaddr, 1);
+		net_txfetchrp(p, rq->srcaddr, 1);
 	if (rq->need & 0x4)
-		net_txrecvrp(p, rq->srcaddr, 2);
+		net_txfetchrp(p, rq->srcaddr, 2);
+	spinlock_release(&p->lock);
 	return;
 nak:
-	net_txrecvrp(p, 0, -1);
+	spinlock_release(&p->lock);
+	net_txfetchrp(p, 0, -1);
 }
 
 void
-net_txrecvrp(proc *p, intptr_t srcaddr, int8_t part)
+net_txfetchrp(proc *p, intptr_t srcaddr, int8_t part)
 {
-	cprintf("[net_txrecvrp] p %p srcaddr %p part %d\n", p, srcaddr, part);
-	net_recvrp rp;
+	cprintf("[net_txfetchrp] p %p srcaddr %p part %d\n", p, srcaddr, part);
+	assert(p->state == PROC_SEND);
+	assert(spinlock_holding(&p->lock));
+	net_fetchrp rp;
 	net_ethsetup(&rp.eth, p->remoteid >> 56);
-	rp.type = NET_RECVRP;
+	rp.type = NET_FETCHRP;
 	rp.srcid = ((uint64_t)net_node << 56) | p->mid;
 	rp.dstid = p->remoteid;
 	rp.srcaddr = srcaddr;
 	if (part >= 0 && part < 3) {
 		rp.part = part;
 		pte_t *pte = pmap_walk(p->pml4, srcaddr, 0);
-		intptr_t addr = mem_ptr(PTE_ADDR(*pte));
-		void *ptr = addr + NET_PULLPART * part;
+		void *ptr = mem_ptr(PTE_ADDR(*pte)) + NET_PULLPART * part;
 		int len = partlen[part];
 		assert(len <= NET_PULLPART);
 		net_tx(&rp, sizeof(rp), ptr, len);
@@ -1060,46 +1164,34 @@ net_txrecvrp(proc *p, intptr_t srcaddr, int8_t part)
 }
 
 void
-net_rxrecvrp(net_recvrp *rp, int len)
+net_rxfetchrp(net_fetchrp *rp, int len)
 {
 	cprintf("[net_rxrecvrp] srcid %p dstid %p srcaddr %p part %d len %llx\n", rp->srcid, rp->dstid, rp->srcaddr, rp->part, len - sizeof(*rp));
-	assert(rp->type == NET_RECVRP);
+	assert(rp->type == NET_FETCHRP);
 	uint8_t srcnode = rp->eth.src[5];
 	assert(srcnode > 0 && srcnode <= NET_MAXNODES && srcnode != net_node);
-	assert(srcnode == (rp->srcid >> 56));
-	assert((rp->srcaddr & 0xfff) == 0);
+	if (srcnode != (rp->srcid >> 56)) return;
+	if (net_node != (rp->dstid >> 56)) return;
+	if (rp->srcaddr & 0xfff) return;
+	if (rp->part < -1 || rp->part > 2) return;
 
 	uint64_t dstid = rp->dstid & ((1ULL << 56) - 1);
 	proc *cp = mid_find(dstid);
 	if (cp == NULL)
 		return;
+	spinlock_acquire(&cp->lock);
 	cprintf("[net_rxrecvrp] cp %p\n", cp);
 	cprintf("[net_rxrecvrp] state %x\n", cp->state);
 	if (cp->state != PROC_RECV || cp->remoteid != rp->srcid)
-		return;
+		goto exit;
 	cprintf("[net_rxrecvrq] pullva %p\n", cp->pullva);
 	if (rp->srcaddr != cp->pullva)
-		return;
-	if (rp->part == -1 && rp->srcaddr == cp->remotelimit) {
-		cprintf("[net_rxrecvrp] wake\n");
-		// if exceed limit, wake proc
-		proc_ready(cp);
-		// remove cp from recvlist
-		spinlock_acquire(&net_lock);
-		proc *p = net_sendlist;
-		proc **pp = &net_sendlist;
-		for ( ; p != NULL; pp = &p->remotenext, p = p->remotenext) {
-			if (p->mid == dstid && p->remoteid == rp->srcid) {
-				*pp = p->remotenext;
-				break;
-			}
-		}
-		spinlock_release(&net_lock);
-	}
-	if (rp->part >= 3 && rp->part < 0)
-		return;
+		goto exit;
+	if (rp->part == -1 && cp->remoteva == cp->remotelimit)
+		goto wake;
+	if (rp->part == -1 || cp->remoteva == cp->remotelimit)
+		goto exit;
 
-	spinlock_acquire(&net_lock);
 	cprintf("[net_rxrecvrp] arrived %x\n", cp->arrived);
 	if (cp->arrived & (1 << rp->part))
 		goto exit;
@@ -1107,8 +1199,7 @@ net_rxrecvrp(net_recvrp *rp, int len)
 	if (len != partlen[rp->part])
 		goto exit;
 	pte_t *pte = pmap_walk(cp->pml4, cp->remoteva, 1);
-	intptr_t addr = mem_ptr(PTE_ADDR(*pte));
-	void *ptr = addr + NET_PULLPART * rp->part;
+	void *ptr = mem_ptr(PTE_ADDR(*pte)) + NET_PULLPART * rp->part;
 	memcpy(ptr, rp->data, len);
 	cp->arrived |= 1 << rp->part;
 	cprintf("[net_rxrecvrp] arrived %x\n", cp->arrived);
@@ -1117,9 +1208,26 @@ net_rxrecvrp(net_recvrp *rp, int len)
 		cp->pullva += PAGESIZE;
 		cp->remoteva += PAGESIZE;
 		cp->arrived = 0;
-		net_txrecvrq(cp);
+		net_txfetchrq(cp);
 	}
 exit:
+	spinlock_release(&cp->lock);
+	return;
+wake:
+	spinlock_release(&cp->lock);
+	cprintf("[net_rxrecvrp] wake\n");
+	// if exceed limit, wake proc
+	proc_ready(cp);
+	// remove cp from recvlist
+	spinlock_acquire(&net_lock);
+	proc *p = net_recvlist;
+	proc **pp = &net_recvlist;
+	for ( ; p != NULL; pp = &p->remotenext, p = p->remotenext) {
+		if (p->mid == dstid && p->remoteid == rp->srcid) {
+			*pp = p->remotenext;
+			break;
+		}
+	}
 	spinlock_release(&net_lock);
 }
 

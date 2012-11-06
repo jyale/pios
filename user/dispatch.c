@@ -6,14 +6,13 @@
 
 #define DISP_MID 1
 
-int
-main (int argc, char **argv)
+void
+dispatch (int cnt, int64_t *opr, int64_t *res)
 {
-	listen(DISP_MID);
 	char ks[2] = "0";
-	int pids[10];
+	int pids[100];
 	int i;
-	for (i = 0; i < 8; i++) {
+	for (i = 0; i < cnt; i++) {
 		pids[i] = fork();
 		if (pids[i] == 0) {
 			// child
@@ -32,19 +31,56 @@ main (int argc, char **argv)
 		}
 	}
 	int pid = fork();
-	for (i = 0; i < 8; i++) {
+	for (i = 0; i < cnt; i++) {
 		cprintf("[disp] start send %x\n", i);
-		int64_t opr[3] = {i + 1, i + 2, 0};
-		size_t len = send('0' + i, opr, 2 * sizeof(int64_t));
+		size_t len = send('0' + i, opr + 2 * i, 2 * sizeof(int64_t));
 		cprintf("[disp] send %x len %x\n", i, len);
 	}
-	for (i = 0; i < 8; i++) {
-		int64_t res = 0;
+	for (i = 0; i < cnt; i++) {
 		cprintf("[disp] start recv %x\n", i);
-		size_t len = recv('0' + i, &res, sizeof(int64_t));
+		size_t len = recv('0' + i, res + i, sizeof(int64_t));
 		cprintf("[disp] recv %x len %x\n", i, len);
-		cprintf("[disp] result %x\n", res);
+		cprintf("[disp] result %x\n", res[i]);
 	}
 	wait(NULL);
+}
+
+int
+main (int argc, char **argv)
+{
+	listen(DISP_MID);
+	int64_t opr[100];
+	int64_t res[50];
+	int cnt = 5;
+
+	if (argc == 2) {
+		// net_node == 1
+		// act as gateway
+		cnt = atoi(argv[1]);
+		cprintf("[disp main] cnt %x (%s)\n", cnt, argv[1]);
+		int i;
+		for (i = 0; i < cnt * 2; i++) {
+			opr[i] = i + 1;
+		}
+
+		send(DISP_MID | (2ULL << 56), opr, cnt * 2 * sizeof(int64_t));
+		recv(DISP_MID | (2ULL << 56), res, cnt * sizeof(int64_t));
+
+		for (i = 0; i < cnt; i++) {
+			cprintf("[disp main] %x + %x = %x\n", opr[2 * i], opr[2 * i + 1], res[i]);
+		}
+	} else {
+		// net_node == 2
+		// act as dispatcher
+		cnt = 50;
+		size_t len = recv(DISP_MID | (1ULL << 56), opr, cnt * 2 * sizeof(int64_t));
+		cnt = len / 2 / sizeof(int64_t);
+		cprintf("[disp main] recv %x adds\n", cnt);
+
+		dispatch(cnt, opr, res);
+
+		len = send(DISP_MID | (1ULL << 56), res, cnt * sizeof(int64_t));
+	}
+
 	return 0;
 }

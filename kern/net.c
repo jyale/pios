@@ -29,6 +29,7 @@ proc *net_migrlist;	// List of currently migrating processes
 proc *net_pulllist;	// List of processes currently pulling a page
 proc *net_sendlist;	// List of currently sending processes
 proc *net_recvlist;	// List of currently recving processes
+proc *net_fetchlist;	// List of currently fetching processes
 
 hashtable *net_waitmap;
 
@@ -80,6 +81,8 @@ net_init(void)
 	label_init(&proc_net->label, tag_default);
 	label_init(&proc_net->clearance, tag_default);
 	cprintf("[net_init] proc_net %p\n", proc_net);
+
+	net_waitmap = table_alloc();
 
 	if (!e100_present) {
 		cprintf("No network card found; networking disabled\n");
@@ -903,6 +906,7 @@ net_rxsendrp(net_sendrp *rp)
 	for ( ; p != NULL; pp = &p->remotenext, p = p->remotenext) {
 		if (p->mid == srcid && p->remoteid == rp->dstid) {
 			*pp = p->remotenext;
+			p->remotenext = NULL;
 			break;
 		}
 	}
@@ -925,12 +929,14 @@ net_recv(struct trapframe *tf, uint64_t msgid)
 	cp->runcpu = NULL;
 	cp->waitproc = proc_net;
 
+	cprintf("[net_recv] add to recvlist\n");
 	spinlock_acquire(&net_lock);
 	assert(cp->remotenext == NULL);
 	cp->remoteid = msgid;
 	cp->remotenext = net_recvlist;
 	net_recvlist = cp;
 
+	cprintf("[net_recv] find from waitmap %p\n", net_waitmap);
 	uint64_t dstid;
 	table_find(net_waitmap, msgid, &dstid);
 	dstid &= ((1ULL << 56) - 1);
@@ -1067,9 +1073,18 @@ net_rxrecvrp(net_recvrp *rp)
 	spinlock_release(&cp->lock);
 
 	spinlock_acquire(&net_lock);
+	proc *p = net_recvlist;
+	proc **pp = &net_recvlist;
+	for ( ; p != NULL; pp = &p->remotenext, p = p->remotenext) {
+		if (p->mid == dstid && p->remoteid == rp->srcid) {
+			*pp = p->remotenext;
+			p->remotenext = NULL;
+			break;
+		}
+	}
 	assert(cp->remotenext == NULL);
-	cp->remotenext = net_recvlist;
-	net_recvlist = cp;
+	cp->remotenext = net_fetchlist;
+	net_fetchlist = cp;
 	spinlock_release(&net_lock);
 	return;
 exit:
@@ -1218,13 +1233,14 @@ wake:
 	cprintf("[net_rxrecvrp] wake\n");
 	// if exceed limit, wake proc
 	proc_ready(cp);
-	// remove cp from recvlist
+	// remove cp from fetchlist
 	spinlock_acquire(&net_lock);
-	proc *p = net_recvlist;
-	proc **pp = &net_recvlist;
+	proc *p = net_fetchlist;
+	proc **pp = &net_fetchlist;
 	for ( ; p != NULL; pp = &p->remotenext, p = p->remotenext) {
 		if (p->mid == dstid && p->remoteid == rp->srcid) {
 			*pp = p->remotenext;
+			p->remotenext = NULL;
 			break;
 		}
 	}

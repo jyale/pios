@@ -63,7 +63,9 @@ KERN_INITFILES :=	sh \
 			wc \
 			testfs \
 			testvm \
-			testlabel
+			testlabel \
+			add \
+			dispatch
 ifdef LAB9
 # Performance benchmarking programs
 KERN_INITFILES +=	matmult \

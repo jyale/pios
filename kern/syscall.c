@@ -154,7 +154,7 @@ do_put(trapframe *tf, uint32_t cmd)
 {
 	proc *p = proc_cur();
 	assert(p->state == PROC_RUN && p->runcpu == cpu_cur());
-	cprintf("PUT proc %p rip %p rsp %p cmd %x\n", p, tf->rip, tf->rsp, cmd);
+//	cprintf("PUT proc %p rip %p rsp %p cmd %x\n", p, tf->rip, tf->rsp, cmd);
 
 	if (cmd & SYS_REMOTE == 0) {
 #if SOL >= 5
@@ -170,7 +170,7 @@ do_put(trapframe *tf, uint32_t cmd)
 	if (cmd & SYS_REMOTE) {
 		// find receiver process
 		uint8_t node = (tf->rdx >> 56) & 0xff;
-		cprintf("PUT node %x net_node %x\n", node, net_node);
+//		cprintf("PUT node %x net_node %x\n", node, net_node);
 		if (node == 0 || node == net_node) {
 			tf->rdx &= (1ULL << 56) - 1;
 			cp = mid_find(tf->rdx);
@@ -199,7 +199,7 @@ do_put(trapframe *tf, uint32_t cmd)
 				panic("sys_put: no memory for child");
 		}
 	}
-	cprintf("PUT cp %p(%x)\n", cp, cp->state);
+//	cprintf("PUT cp %p(%x)\n", cp, cp->state);
 
 	// WWY: do label pacing
 	tag_t less = label_leq_hi(&p->label, &cp->clearance);
@@ -219,20 +219,24 @@ do_put(trapframe *tf, uint32_t cmd)
 	if (cmd & SYS_REMOTE) {
 		if (cp == proc_net) {
 			if (ts != 0) {
-				cprintf("proc %p send wait for proc_net\n", p);
+//				cprintf("proc %p send wait for proc_net\n", p);
 				proc_wait(p, proc_net, tf, ts);
 			}
 		} else if (cp->state != PROC_BLOCK || ts != 0) {
-			cprintf("proc %p send wait for proc %p non-blocked\n", p, cp);
+//			cprintf("proc %p send wait for proc %p non-blocked\n", p, cp);
 			proc_wait(p, cp, tf, ts);
 		} else if (cp->waitproc != p) {
-			cprintf("proc %p send wait for proc %p blocked for other proc\n", p, cp);
+//			cprintf("proc %p send wait for proc %p blocked for other proc\n", p, cp);
 			proc_wait(p, cp, tf, ts);
+		} else {
+//			cprintf("proc %p don't send wait for proc %p\n", p, cp);
 		}
 	} else {
 		if (cp->state != PROC_STOP || ts != 0) {
-			cprintf("proc %p put wait for proc %p non-stopped\n", p, cp);
+//			cprintf("proc %p put wait for proc %p non-stopped\n", p, cp);
 			proc_wait(p, cp, tf, ts);
+		} else {
+//			cprintf("proc %p don't put wait for proc %p\n", p, cp);
 		}
 	}
 
@@ -335,7 +339,7 @@ do_put(trapframe *tf, uint32_t cmd)
 #endif	// SOL >= 3
 
 exit:
-	cprintf("PUT cmd %x\n", cmd);
+//	cprintf("PUT cmd %x\n", cmd);
 	// Start the child if requested
 	if (cmd & SYS_START)
 		proc_ready(cp);
@@ -348,7 +352,7 @@ do_get(trapframe *tf, uint32_t cmd)
 {
 	proc *p = proc_cur();
 	assert(p->state == PROC_RUN && p->runcpu == cpu_cur());
-	cprintf("GET proc %p rip %p rsp %p cmd %x\n", p, tf->rip, tf->rsp, cmd);
+//	cprintf("GET proc %p rip %p rsp %p cmd %x\n", p, tf->rip, tf->rsp, cmd);
 
 #if SOL >= 5
 	// First migrate if we need to.
@@ -492,7 +496,7 @@ do_ret(trapframe *tf)
 				// no matching process
 				trap_return(tf);
 			}
-			cprintf("proc %p recv block for proc %p\n", cp, p);
+//			cprintf("proc %p recv block for proc %p\n", cp, p);
 			proc_block(p, cp ,tf);
 		} else {
 			net_recv(tf, tf->rdx);

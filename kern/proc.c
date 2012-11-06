@@ -202,11 +202,12 @@ proc_save(proc *p, trapframe *tf, int entry)
 void gcc_noreturn
 proc_wait(proc *p, proc *cp, trapframe *tf, uint64_t ts)
 {
-	cprintf("[proc wait] p %p(%x) cp %p(%x) ts %llx\n", p, p->state, cp, cp->state, ts);
+//	cprintf("[proc wait] p %p(%x) cp %p(%x) ts %llx\n", p, p->state, cp, cp->state, ts);
 #if SOL >= 2
 	assert(spinlock_holding(&p->lock));
 	assert(cp && cp != &proc_null);	// null proc is always stopped
-	assert((cp->state != PROC_STOP && cp->state != PROC_BLOCK) || ts != 0);
+	assert(ts != 0 || cp->state != PROC_STOP);
+	assert(ts != 0 || cp->state != PROC_BLOCK || cp->waitproc != p);
 
 	p->state = PROC_WAIT;
 	p->runcpu = NULL;

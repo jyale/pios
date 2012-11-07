@@ -219,7 +219,7 @@ do_put(trapframe *tf, uint32_t cmd)
 	if (cmd & SYS_REMOTE) {
 		if (cp == proc_net) {
 			if (ts != 0) {
-//				cprintf("proc %p send wait for proc_net\n", p);
+				cprintf("proc %p send wait for proc_net\n", p);
 				proc_wait(p, proc_net, tf, ts);
 			}
 		} else if (cp->state != PROC_BLOCK || ts != 0) {

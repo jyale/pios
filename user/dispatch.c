@@ -72,14 +72,21 @@ main (int argc, char **argv)
 	} else {
 		// net_node == 2
 		// act as dispatcher
-		cnt = 50;
-		size_t len = recv(DISP_MID | (1ULL << 56), opr, cnt * 2 * sizeof(int64_t));
-		cnt = len / 2 / sizeof(int64_t);
-		cprintf("[disp main] recv %x adds\n", cnt);
+		// give some time constraints
+		tag_t t;
+		t.cat = 1; t.level = LVL_DEFAULT; t.time = 5;
+		sys_set_label(t);
+		sys_set_clearance(t);
+		while (1) {
+			cnt = 50;
+			size_t len = recv(DISP_MID | (1ULL << 56), opr, cnt * 2 * sizeof(int64_t));
+			cnt = len / 2 / sizeof(int64_t);
+			cprintf("[disp main] recv %x adds\n", cnt);
 
-		dispatch(cnt, opr, res);
+			dispatch(cnt, opr, res);
 
-		len = send(DISP_MID | (1ULL << 56), res, cnt * sizeof(int64_t));
+			len = send(DISP_MID | (1ULL << 56), res, cnt * sizeof(int64_t));
+		}
 	}
 
 	return 0;

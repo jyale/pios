@@ -242,14 +242,38 @@ net_tick()
 	// Retransmit process migrate requests
 	proc *p;
 	for (p = net_migrlist; p != NULL; p = p->migrnext) {
-		cprintf("retransmit migrq for %x\n", p);
+		cprintf("retransmit migrq for %p\n", p);
 		net_txmigrq(p);
 	}
 
 	// Retransmit page pull requests
 	for (p = net_pulllist; p != NULL; p = p->pullnext) {
-		cprintf("retransmit pullrq for %x\n", p);
+		cprintf("retransmit pullrq for %p\n", p);
 		net_txpullrq(p);
+	}
+
+	// Retransmit send requests
+	for (p = net_sendlist; p != NULL; p = p->remotenext) {
+		spinlock_acquire(&p->lock);
+		cprintf("retransmit sendrq for %p\n", p);
+		net_txsendrq(p);
+		spinlock_release(&p->lock);
+	}
+
+	// Retransmit recv requests
+	for (p = net_recvlist; p != NULL; p = p->remotenext) {
+		cprintf("retransmit recvrq for %p\n", p);
+		spinlock_acquire(&p->lock);
+		net_txrecvrq(p);
+		spinlock_release(&p->lock);
+	}
+
+	// Retransmit fetch requests
+	for (p = net_fetchlist; p != NULL; p = p->remotenext) {
+		cprintf("retransmit fetchrq for %p\n", p);
+		spinlock_acquire(&p->lock);
+		net_txfetchrq(p);
+		spinlock_release(&p->lock);
 	}
 #else	// ! SOL >= 5
 	// Lab 5: your code here.
@@ -865,11 +889,20 @@ net_rxsendrq(net_sendrq *rq)
 	if (cp->remoteid != rq->srcid) {
 		goto wait_save;
 	}
+
 	net_txrecvrq(cp);
 	spinlock_release(&cp->lock);
+
+	cprintf("[net_rxsendrq] add to recvlist\n");
+	spinlock_acquire(&net_lock);
+	assert(cp->remotenext == NULL);
+	cp->remotenext = net_recvlist;
+	net_recvlist = cp;
+	spinlock_release(&net_lock);
 	return;
 
 wait_save:
+	cprintf("[net_rxsendrq] wait_save\n");
 	spinlock_release(&cp->lock);
 
 	spinlock_acquire(&net_lock);
@@ -928,21 +961,22 @@ net_recv(struct trapframe *tf, uint64_t msgid)
 	cp->state = PROC_BLOCK;
 	cp->runcpu = NULL;
 	cp->waitproc = proc_net;
-
-	cprintf("[net_recv] add to recvlist\n");
-	spinlock_acquire(&net_lock);
-	assert(cp->remotenext == NULL);
 	cp->remoteid = msgid;
-	cp->remotenext = net_recvlist;
-	net_recvlist = cp;
 
 	cprintf("[net_recv] find from waitmap %p\n", net_waitmap);
 	uint64_t dstid;
+	spinlock_acquire(&net_lock);
 	table_find(net_waitmap, msgid, &dstid);
-	dstid &= ((1ULL << 56) - 1);
 	cprintf("[net_recv] dstid %p mid %p\n", dstid, cp->mid);
+	dstid &= ((1ULL << 56) - 1);
 	if (dstid == cp->mid) {
 		table_insert(net_waitmap, msgid, 0);
+
+		cprintf("[net_recv] add to recvlist\n");
+		assert(cp->remotenext == NULL);
+		cp->remotenext = net_recvlist;
+		net_recvlist = cp;
+
 		spinlock_release(&net_lock);
 		// recv
 		net_txrecvrq(cp);
@@ -983,7 +1017,7 @@ net_rxrecvrq(net_recvrq *rq)
 	uint64_t srcid = rq->srcid & ((1ULL << 56) - 1);
 	proc *p = mid_find(srcid);
 	cprintf("[net_rxrecvrq] p %p p->state %x\n", p, p->state);
-	if (p->state != PROC_WAIT)
+	if (p->state != PROC_WAIT || p->waitproc != proc_net)
 		return;
 
 	tag_t less = label_leq_hi(&p->label, &rq->clearance);
@@ -1125,15 +1159,15 @@ net_rxfetchrq(net_fetchrq *rq)
 	if (p == NULL)
 		goto nak;
 	spinlock_acquire(&p->lock);
-	cprintf("[net_rxrecvrq] p %p\n", p);
-	cprintf("[net_rxrecvrq] state %x\n", p->state);
+	cprintf("[net_rxfetchrq] p %p\n", p);
+	cprintf("[net_rxfetchrq] state %x\n", p->state);
 	if (p->state != PROC_SEND || p->remoteid != rq->dstid)
 		goto nak;
 	if (rq->srcaddr < p->remoteva || rq->srcaddr > p->remotelimit)
 		goto nak;
 	if (rq->srcaddr == p->remotelimit) {
 		// if exceed limit, wake proc
-		cprintf("[net_rxrecvrq] wake\n");
+		cprintf("[net_rxfetchrq] wake\n");
 		net_txfetchrp(p, rq->srcaddr, -1);
 		spinlock_release(&p->lock);
 		proc_ready(p);
@@ -1181,7 +1215,7 @@ net_txfetchrp(proc *p, intptr_t srcaddr, int8_t part)
 void
 net_rxfetchrp(net_fetchrp *rp, int len)
 {
-	cprintf("[net_rxrecvrp] srcid %p dstid %p srcaddr %p part %d len %llx\n", rp->srcid, rp->dstid, rp->srcaddr, rp->part, len - sizeof(*rp));
+	cprintf("[net_rxfetchrp] srcid %p dstid %p srcaddr %p part %d len %llx\n", rp->srcid, rp->dstid, rp->srcaddr, rp->part, len - sizeof(*rp));
 	assert(rp->type == NET_FETCHRP);
 	uint8_t srcnode = rp->eth.src[5];
 	assert(srcnode > 0 && srcnode <= NET_MAXNODES && srcnode != net_node);
@@ -1195,11 +1229,11 @@ net_rxfetchrp(net_fetchrp *rp, int len)
 	if (cp == NULL)
 		return;
 	spinlock_acquire(&cp->lock);
-	cprintf("[net_rxrecvrp] cp %p\n", cp);
-	cprintf("[net_rxrecvrp] state %x\n", cp->state);
+	cprintf("[net_rxfetchrp] cp %p\n", cp);
+	cprintf("[net_rxfetchrp] state %x\n", cp->state);
 	if (cp->state != PROC_RECV || cp->remoteid != rp->srcid)
 		goto exit;
-	cprintf("[net_rxrecvrq] pullva %p\n", cp->pullva);
+	cprintf("[net_rxfetchrp] pullva %p\n", cp->pullva);
 	if (rp->srcaddr != cp->pullva)
 		goto exit;
 	if (rp->part == -1 && cp->remoteva == cp->remotelimit)
@@ -1207,7 +1241,7 @@ net_rxfetchrp(net_fetchrp *rp, int len)
 	if (rp->part == -1 || cp->remoteva == cp->remotelimit)
 		goto exit;
 
-	cprintf("[net_rxrecvrp] arrived %x\n", cp->arrived);
+	cprintf("[net_rxfetchrp] arrived %x\n", cp->arrived);
 	if (cp->arrived & (1 << rp->part))
 		goto exit;
 	len -= sizeof(*rp);
@@ -1217,7 +1251,7 @@ net_rxfetchrp(net_fetchrp *rp, int len)
 	void *ptr = mem_ptr(PTE_ADDR(*pte)) + NET_PULLPART * rp->part;
 	memcpy(ptr, rp->data, len);
 	cp->arrived |= 1 << rp->part;
-	cprintf("[net_rxrecvrp] arrived %x\n", cp->arrived);
+	cprintf("[net_rxfetchrp] arrived %x\n", cp->arrived);
 	// advance if possible
 	if (cp->arrived == 7) {
 		cp->pullva += PAGESIZE;
@@ -1230,7 +1264,7 @@ exit:
 	return;
 wake:
 	spinlock_release(&cp->lock);
-	cprintf("[net_rxrecvrp] wake\n");
+	cprintf("[net_rxfetchrp] wake\n");
 	// if exceed limit, wake proc
 	proc_ready(cp);
 	// remove cp from fetchlist

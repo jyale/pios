@@ -37,6 +37,25 @@ video_init(void)
 	uint16_t was;
 	unsigned pos;
 
+	uint32_t ret;
+
+	outb(GRA_CTRL_BASE, 0x6);
+	outb(GRA_CTRL_BASE + 1, 0x8);
+	outb(MISC_OUT_REG_W, 0x42);
+	addr_6845 = MONO_BASE;
+	cp = (uint16_t *)mem_ptr(MONO_BUF);
+
+#if 0
+	uint8_t flag = inb(MISC_OUT_REG_R);
+	if (flag & 1) {
+		addr_6845 = CGA_BASE;
+		cp = (uint16_t *)mem_ptr(CGA_BUF);
+	} else {
+		addr_6845 = MONO_BASE;
+		cp = (uint16_t *)mem_ptr(MONO_BUF);
+	}
+#endif
+#if 0
 	/* Get a pointer to the memory-mapped text display buffer. */
 	cp = (uint16_t*) mem_ptr(CGA_BUF);
 	was = *cp;
@@ -48,6 +67,7 @@ video_init(void)
 		*cp = was;
 		addr_6845 = CGA_BASE;
 	}
+#endif
 	
 	/* Extract cursor location */
 	outb(addr_6845, 14);

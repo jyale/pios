@@ -30,7 +30,6 @@ dispatch (int cnt, int64_t *opr, int64_t *res)
 			sys_put(SYS_START, pids[i], NULL, VM_USERLO, VM_USERLO, 0);
 		}
 	}
-	int pid = fork();
 	for (i = 0; i < cnt; i++) {
 		cprintf("[disp] start send %x\n", i);
 		size_t len = send('0' + i, opr + 2 * i, 2 * sizeof(int64_t));

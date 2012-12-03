@@ -71,7 +71,10 @@ endif
 
 # try to generate unique GDB and network port numbers
 GDBPORT	:= $(shell expr `id -u` % 5000 + 25000)
-NETPORT := $(shell expr `id -u` % 5000 + 30000)
+NETPORT1 := $(shell expr `id -u` % 5000 + 30000)
+NETPORT2 := $(shell expr `id -u` % 5000 + 30001)
+NETPORT3 := $(shell expr `id -u` % 5000 + 30002)
+NETPORT4 := $(shell expr `id -u` % 5000 + 30003)
 
 # Correct option to enable the GDB stub and specify its port number to qemu.
 # First is for qemu versions <= 0.10, second is for later qemu versions.
@@ -305,10 +308,24 @@ QEMUOPTS = -smp $(NCPUS) -hda $(OBJDIR)/kern/kernel.img -serial mon:stdio \
 		-k en-us -m 1100M
 #QEMUOPTS +=  -d int,pcall,in_asm,cpu_reset,cpu
 #QEMUNET = -net socket,mcast=230.0.0.1:$(NETPORT) -net nic,model=i82559er
-QEMUNET1 = -net nic,model=i82559er,macaddr=52:54:00:12:34:01 \
-		-net socket,connect=:$(NETPORT) -net dump,file=node1.dump
-QEMUNET2 = -net nic,model=i82559er,macaddr=52:54:00:12:34:02 \
-		-net socket,listen=:$(NETPORT) -net dump,file=node2.dump
+QEMUNET1 = -net nic,vlan=1,model=i82559er,macaddr=52:54:00:12:34:01 \
+		-net socket,vlan=1,listen=:$(NETPORT1) \
+		-net dump,file=node1.dump
+QEMUNET2 = -net nic,vlan=2,model=i82559er,macaddr=52:54:00:12:34:02 \
+		-net socket,vlan=2,connect=127.0.0.1:$(NETPORT1) \
+		-net socket,vlan=2,listen=:$(NETPORT2) \
+		-net dump,file=node2.dump
+QEMUNET3 = -net nic,vlan=3,model=i82559er,macaddr=52:54:00:12:34:03 \
+		-net socket,vlan=3,connect=127.0.0.1:$(NETPORT2) \
+		-net socket,vlan=3,listen=:$(NETPORT3) \
+		-net dump,file=node3.dump
+QEMUNET4 = -net nic,vlan=4,model=i82559er,macaddr=52:54:00:12:34:04 \
+		-net socket,vlan=4,connect=127.0.0.1:$(NETPORT3) \
+		-net socket,vlan=4,listen=:$(NETPORT4) \
+		-net dump,file=node4.dump
+QEMUNET5 = -net nic,vlan=5,model=i82559er,macaddr=52:54:00:12:34:05 \
+		-net socket,vlan=5,connect=127.0.0.1:$(NETPORT4) \
+		-net dump,file=node5.dump
 
 .gdbinit: .gdbinit.tmpl
 	sed "s/localhost:1234/localhost:$(GDBPORT)/" < $^ > $@
@@ -322,16 +339,25 @@ else
 # Only one instance gets input from the terminal, to avoid confusion.
 qemu: $(IMAGES)
 	@rm -f node?.dump
-	$(QEMU) $(QEMUOPTS) $(QEMUNET2) </dev/null | sed -e 's/^/2: /g' &
+	$(QEMU) $(QEMUOPTS) $(QEMUNET1) </dev/null | sed -e 's/^/1: /g' &
 	@sleep 1
-	$(QEMU) $(QEMUOPTS) $(QEMUNET1)
+	$(QEMU) $(QEMUOPTS) $(QEMUNET2)
 endif
 
 qemu-net1: $(IMAGES)
-	$(QEMU) -nographic $(QEMUOPTS) $(QEMUNET1)
+	$(QEMU) -nographic $(QEMUOPTS) $(QEMUNET1) -d int,pcall
 
 qemu-net2: $(IMAGES)
 	$(QEMU) -nographic $(QEMUOPTS) $(QEMUNET2)
+
+qemu-net3: $(IMAGES)
+	$(QEMU) -nographic $(QEMUOPTS) $(QEMUNET3)
+
+qemu-net4: $(IMAGES)
+	$(QEMU) -nographic $(QEMUOPTS) $(QEMUNET4)
+
+qemu-net5: $(IMAGES)
+	$(QEMU) -nographic $(QEMUOPTS) $(QEMUNET5)
 
 # Launch QEMU without a virtual VGA display (use when X is unavailable).
 qemu-nox: $(IMAGES)
@@ -348,9 +374,9 @@ else
 qemu-gdb: $(IMAGES) .gdbinit
 	@echo "*** Now run 'gdb'." 1>&2
 	@rm -f node?.dump
-	$(QEMU) $(QEMUOPTS) $(QEMUNET2) </dev/null | sed -e 's/^/2: /g' &
+	$(QEMU) $(QEMUOPTS) $(QEMUNET1) </dev/null | sed -e 's/^/1: /g' &
 	@sleep 1
-	$(QEMU) $(QEMUOPTS) $(QEMUNET1) -S $(QEMUPORT)
+	$(QEMU) $(QEMUOPTS) $(QEMUNET2) -S $(QEMUPORT)
 endif
 
 # Launch QEMU for debugging, without a virtual VGA display.

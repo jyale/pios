@@ -20,6 +20,9 @@
 #include <inc/types.h>
 #include <inc/x86.h>
 
+#define MISC_OUT_REG_R	0x3CC
+#define MISC_OUT_REG_W	0x3C2
+#define GRA_CTRL_BASE	0x3CE
 
 #define MONO_BASE	0x3B4
 #define MONO_BUF	0xB0000

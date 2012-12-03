@@ -61,16 +61,16 @@ recv(uint64_t src, void *data, size_t size)
 	len = ROUNDUP(len, PAGESIZE);
 	size_t newlen = size + sizeof(msg_hdr_t);
 	newlen = ROUNDUP(newlen, PAGESIZE);
-	cprintf("[lib recv] %x needed %x allocated\n", newlen, len);
+//	cprintf("[lib recv] %x needed %x allocated\n", newlen, len);
 	if (newlen > len) {
 		sys_get(SYS_PERM | SYS_RW, 0, NULL, NULL, (void *)(MSG_RECV_BASE + len), newlen - len);
 	}
 
 	// copy
 	memset(msg, 0, msg->hdr.len + sizeof(msg_hdr_t));
-	cprintf("[lib recv] start recv %p\n", src);
+//	cprintf("[lib recv] start recv %p\n", src);
 	sys_recv(src);
-	cprintf("[lib recv] done recv %x\n", msg->hdr.len);
+//	cprintf("[lib recv] done recv %x\n", msg->hdr.len);
 	if (size > msg->hdr.len) {
 		size = msg->hdr.len;
 	}

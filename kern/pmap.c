@@ -690,7 +690,7 @@ pmap_pagefault(trapframe *tf)
 	pte_t *pte = pmap_walk(p->pml4, fva, 1);
 	if ((*pte & (SYS_READ | SYS_WRITE | PTE_P)) !=
 			(SYS_READ | SYS_WRITE | PTE_P)) {
-		cprintf("pmap_pagefault: page for fva %p doesn't exist *pte %p\n", fva, pte);
+		cprintf("pmap_pagefault: page for fva %p doesn't exist proc %p *pte %p\n", fva, p, pte);
 		return;		// page doesn't exist at all - blame user
 	}
 	assert(!(*pte & PTE_W));

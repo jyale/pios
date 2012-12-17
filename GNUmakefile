@@ -345,7 +345,7 @@ qemu: $(IMAGES)
 endif
 
 qemu-net1: $(IMAGES)
-	$(QEMU) -nographic $(QEMUOPTS) $(QEMUNET1) -d int,pcall
+	$(QEMU) -nographic $(QEMUOPTS) $(QEMUNET1)
 
 qemu-net2: $(IMAGES)
 	$(QEMU) -nographic $(QEMUOPTS) $(QEMUNET2)

@@ -67,6 +67,8 @@ KERN_INITFILES :=	sh \
 			add \
 			dispatch \
 			mapreduce \
+            pingpong \
+            ring \
             wordcount
 ifdef LAB9
 # Performance benchmarking programs

@@ -50,7 +50,8 @@ void map (void *inbuf, void *outbufs[])
             strncpy(tmpStr, inchar+start, end-1 - start + 1);
             tmpStr[end-start]='\0';
             // currently no divide 
-            struct Word *outchar = outbufs[(tmpStr[0]-'!') * (masterid-1) / ('~'-'!'+1) + 1];
+            // struct Word *outchar = outbufs[(tmpStr[0]-'!') * (masterid-1) / ('~'-'!'+1) + 1];
+            struct Word *outchar = outbufs[tmpStr[0] % (masterid-1) + 1];
             outchar[0].num ++;
             strcpy(outchar[outchar[0].num].word, tmpStr);
             outchar[outchar[0].num].num = 1;
